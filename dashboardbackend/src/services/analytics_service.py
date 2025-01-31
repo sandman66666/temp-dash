@@ -4,19 +4,25 @@ AnalyticsService: Core service for fetching and aggregating analytics data
 from typing import Dict, Any
 import logging
 import asyncio
+import ssl
+import certifi
+import aiohttp
+import json
 from datetime import datetime, timedelta
 from opensearchpy import AsyncOpenSearch
-import aioredis
-from .cache import analytics_cache
+import redis.asyncio as redis
+import os
+from src.utils.query_builder import OpenSearchQueryBuilder
 
 logger = logging.getLogger(__name__)
 
 class AnalyticsService:
-    def __init__(self, opensearch_client: AsyncOpenSearch, redis_client: aioredis.Redis):
+    def __init__(self, opensearch_client: AsyncOpenSearch, redis_client: redis.Redis):
         self.opensearch = opensearch_client
         self.redis = redis_client
         self.index = "events-v2"
         self.cache_ttl = timedelta(minutes=5)
+        self.query_builder = OpenSearchQueryBuilder()
 
     async def get_dashboard_metrics(self) -> Dict[str, Any]:
         """
@@ -28,7 +34,7 @@ class AnalyticsService:
         # Try to get from cache first
         cached_data = await self.redis.get(cache_key)
         if cached_data:
-            return cached_data
+            return json.loads(cached_data)
 
         try:
             # Get all required metrics concurrently
@@ -56,8 +62,8 @@ class AnalyticsService:
             # Cache the results
             await self.redis.set(
                 cache_key,
-                metrics,
-                expire=int(self.cache_ttl.total_seconds())
+                json.dumps(metrics),
+                ex=int(self.cache_ttl.total_seconds())
             )
 
             return metrics
@@ -71,20 +77,20 @@ class AnalyticsService:
 
     async def _get_thread_users(self) -> Dict[str, Any]:
         """Get count of users with message threads"""
-        query = {
-            "aggs": {
-                "unique_users": {
-                    "cardinality": {
-                        "field": "trace_id.keyword"
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "handleMessageInThread_start"}}
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {
+                        "cardinality": {
+                            "field": "trace_id.keyword"
+                        }
                     }
                 }
-            },
-            "query": {
-                "term": {
-                    "event_name.keyword": "handleMessageInThread_start"
-                }
             }
-        }
+        )
         
         result = await self.opensearch.search(
             index=self.index,
@@ -100,22 +106,84 @@ class AnalyticsService:
             "description": "Users who have started at least one message thread"
         }
 
+    async def _get_total_users(self) -> Dict[str, Any]:
+        """Get total number of users from Descope"""
+        descope_url = os.getenv('DESCOPE_API_URL', 'https://api.descope.com/v1/mgmt/user/search')
+        bearer_token = os.getenv('DESCOPE_BEARER_TOKEN')
+        
+        if not bearer_token:
+            logger.error("Descope bearer token not found in environment variables")
+            return {
+                "value": 0,
+                "label": "Total Users",
+                "description": "Error: Could not fetch user count"
+            }
+            
+        headers = {
+            'Authorization': f'Bearer {bearer_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            "tenantIds": [],
+            "text": "",
+            "roleNames": [],
+            "loginIds": [],
+            "ssoAppIds": [],
+            "customAttributes": {}
+        }
+        
+        # Create SSL context with certifi certificates
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        
+        try:
+            conn = aiohttp.TCPConnector(ssl=ssl_context)
+            async with aiohttp.ClientSession(connector=conn) as session:
+                async with session.post(descope_url, headers=headers, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        users = data.get('users', [])
+                        total_count = len(users)
+                        
+                        return {
+                            "value": total_count,
+                            "label": "Total Users",
+                            "description": "Total number of registered users",
+                            "previousValue": total_count - (total_count * 0.1)
+                        }
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Descope API error: {response.status} - {error_text}")
+                        return {
+                            "value": 0,
+                            "label": "Total Users",
+                            "description": f"Error: {response.status}"
+                        }
+                        
+        except Exception as e:
+            logger.error(f"Error fetching Descope users: {str(e)}")
+            return {
+                "value": 0,
+                "label": "Total Users",
+                "description": f"Error: {str(e)}"
+            }
+
     async def _get_sketch_users(self) -> Dict[str, Any]:
         """Get count of users who have uploaded sketches"""
-        query = {
-            "aggs": {
-                "unique_users": {
-                    "cardinality": {
-                        "field": "trace_id.keyword"
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "uploadSketch_end"}}
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {
+                        "cardinality": {
+                            "field": "trace_id.keyword"
+                        }
                     }
                 }
-            },
-            "query": {
-                "term": {
-                    "event_name.keyword": "uploadSketch_end"
-                }
             }
-        }
+        )
         
         result = await self.opensearch.search(
             index=self.index,
@@ -133,20 +201,20 @@ class AnalyticsService:
 
     async def _get_render_users(self) -> Dict[str, Any]:
         """Get count of users who have completed renders"""
-        query = {
-            "aggs": {
-                "unique_users": {
-                    "cardinality": {
-                        "field": "trace_id.keyword"
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "renderStart_end"}}
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {
+                        "cardinality": {
+                            "field": "trace_id.keyword"
+                        }
                     }
                 }
-            },
-            "query": {
-                "term": {
-                    "event_name.keyword": "renderStart_end"
-                }
             }
-        }
+        )
         
         result = await self.opensearch.search(
             index=self.index,
@@ -164,31 +232,31 @@ class AnalyticsService:
 
     async def _get_medium_chat_users(self) -> Dict[str, Any]:
         """Get users with 5-20 message threads"""
-        query = {
-            "aggs": {
-                "thread_count": {
-                    "terms": {
-                        "field": "trace_id.keyword",
-                        "size": 10000
-                    },
-                    "aggs": {
-                        "thread_filter": {
-                            "bucket_selector": {
-                                "buckets_path": {
-                                    "count": "_count"
-                                },
-                                "script": "params.count >= 5 && params.count <= 20"
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "handleMessageInThread_start"}}
+            ],
+            aggregations={
+                "aggs": {
+                    "thread_count": {
+                        "terms": {
+                            "field": "trace_id.keyword",
+                            "size": 10000
+                        },
+                        "aggs": {
+                            "thread_filter": {
+                                "bucket_selector": {
+                                    "buckets_path": {
+                                        "count": "_count"
+                                    },
+                                    "script": "params.count >= 5 && params.count <= 20"
+                                }
                             }
                         }
                     }
                 }
-            },
-            "query": {
-                "term": {
-                    "event_name.keyword": "handleMessageInThread_start"
-                }
             }
-        }
+        )
         
         result = await self.opensearch.search(
             index=self.index,
@@ -206,31 +274,31 @@ class AnalyticsService:
 
     async def _get_power_users(self) -> Dict[str, Any]:
         """Get users with more than 20 message threads"""
-        query = {
-            "aggs": {
-                "thread_count": {
-                    "terms": {
-                        "field": "trace_id.keyword",
-                        "size": 10000
-                    },
-                    "aggs": {
-                        "thread_filter": {
-                            "bucket_selector": {
-                                "buckets_path": {
-                                    "count": "_count"
-                                },
-                                "script": "params.count > 20"
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "handleMessageInThread_start"}}
+            ],
+            aggregations={
+                "aggs": {
+                    "thread_count": {
+                        "terms": {
+                            "field": "trace_id.keyword",
+                            "size": 10000
+                        },
+                        "aggs": {
+                            "thread_filter": {
+                                "bucket_selector": {
+                                    "buckets_path": {
+                                        "count": "_count"
+                                    },
+                                    "script": "params.count > 20"
+                                }
                             }
                         }
                     }
                 }
-            },
-            "query": {
-                "term": {
-                    "event_name.keyword": "handleMessageInThread_start"
-                }
             }
-        }
+        )
         
         result = await self.opensearch.search(
             index=self.index,
@@ -244,14 +312,4 @@ class AnalyticsService:
             "value": count,
             "label": "Power Users",
             "description": "Users with more than 20 message threads"
-        }
-
-    async def _get_total_users(self) -> Dict[str, Any]:
-        """Get total number of users from Descope"""
-        # Implement Descope users count here
-        # For now returning mock data
-        return {
-            "value": 1000,  # Replace with actual Descope API call
-            "label": "Total Users",
-            "description": "Total number of registered users"
         }

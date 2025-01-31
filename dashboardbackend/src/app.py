@@ -5,8 +5,8 @@ from quart import Quart
 from quart_cors import cors
 import logging
 from dotenv import load_dotenv
-# Change from relative to absolute import
-from src.core.init import init_services
+# Change to import from core directly since init_services is in __init__.py
+from src.core import init_services
 import os
 
 # Configure logging
@@ -34,8 +34,10 @@ def create_app():
     logger.info("Registering application blueprints...")
     try:
         from src.api.health import init_app as init_health
+        from src.api.metrics import init_app as init_metrics
         
         init_health(app)
+        init_metrics(app)
         logger.info("Blueprints registered successfully")
     except Exception as e:
         logger.error(f"Failed to register blueprints: {str(e)}")
