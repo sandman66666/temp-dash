@@ -1,44 +1,32 @@
-import { FC, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchMetrics } from '../../services/metricService'
-import MetricGrid from '../metrics/MetricGrid'
-import DateRangeSelector from '../common/DateRangeSelector'
+// analytics-dashboard/src/components/dashboard/Dashboard.tsx
+import { FC, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { fetchMetrics } from '../../services/metricService';
+import MetricGrid from '../metrics/MetricGrid';
+import DateRangeSelector from '../common/DateRangeSelector';
+import UserListModal from '../modal/UserListModal';
+import UserEventsModal from '../modal/UserEventsModal';
 
 const Dashboard: FC = () => {
-  // Default to last 7 days
-  const defaultEndDate = new Date()
-  const defaultStartDate = new Date()
-  defaultStartDate.setDate(defaultEndDate.getDate() - 7)
+  const defaultEndDate = new Date();
+  const defaultStartDate = new Date();
+  defaultStartDate.setDate(defaultEndDate.getDate() - 7);
 
-  const [startDate, setStartDate] = useState<Date>(defaultStartDate)
-  const [endDate, setEndDate] = useState<Date>(defaultEndDate)
+  const [startDate, setStartDate] = useState<Date>(defaultStartDate);
+  const [endDate, setEndDate] = useState<Date>(defaultEndDate);
+  const [showUserListModal, setShowUserListModal] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<{ userId: string, email: string } | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['metrics', startDate, endDate],
     queryFn: () => fetchMetrics(startDate, endDate),
-  })
+  });
 
   const handleDateChange = (start: Date, end: Date) => {
-    setStartDate(start)
-    setEndDate(end)
-    refetch()
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="text-gray-500">Loading metrics...</div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <div className="text-red-500">Error loading metrics</div>
-      </div>
-    )
-  }
+    setStartDate(start);
+    setEndDate(end);
+    refetch();
+  };
 
   return (
     <div className="space-y-6 pt-16">
@@ -55,9 +43,38 @@ const Dashboard: FC = () => {
           onDateChange={handleDateChange}
         />
       </div>
-      {data && <MetricGrid metrics={data.metrics} />}
+      {data && (
+        <MetricGrid
+          metrics={data.metrics}
+          onMetricClick={(metricId: string) => {
+            // For this example, clicking any metric opens the User List Modal.
+            setShowUserListModal(true);
+          }}
+        />
+      )}
+      <button
+        onClick={() => setShowUserListModal(true)}
+        className="px-4 py-2 bg-blue-500 text-white rounded"
+      >
+        View Users
+      </button>
+      {showUserListModal && (
+        <UserListModal
+          onClose={() => setShowUserListModal(false)}
+          onSelectUser={(user) => {
+            setSelectedUser(user);
+            setShowUserListModal(false);
+          }}
+        />
+      )}
+      {selectedUser && (
+        <UserEventsModal
+          userId={selectedUser.userId}
+          onClose={() => setSelectedUser(null)}
+        />
+      )}
     </div>
-  )
-}
+  );
+};
 
-export default Dashboard
+export default Dashboard;

@@ -1,13 +1,14 @@
-// src/components/metrics/MetricGrid.tsx
+// analytics-dashboard/src/components/metrics/MetricGrid.tsx
 import { FC } from 'react'
 import { Metric } from '../../types/metrics'
 import MetricCard from './MetricCard'
 
 interface MetricGridProps {
   metrics: Metric[]
+  onMetricClick: (metricId: string) => void
 }
 
-const MetricGrid: FC<MetricGridProps> = ({ metrics }) => {
+const MetricGrid: FC<MetricGridProps> = ({ metrics, onMetricClick }) => {
   // Define the order of metrics and their display names
   const orderedMetricIds = [
     'descope_users',
@@ -19,7 +20,7 @@ const MetricGrid: FC<MetricGridProps> = ({ metrics }) => {
   ]
 
   // Custom display names and descriptions
-  const displayConfig = {
+  const displayConfig: { [key: string]: { name: string; description: string } } = {
     'descope_users': {
       name: 'Total Users',
       description: 'Total number of registered users'
@@ -62,8 +63,12 @@ const MetricGrid: FC<MetricGridProps> = ({ metrics }) => {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {orderedMetrics.map((metric) => (
-        <MetricCard key={metric.id} metric={metric} />
+      {orderedMetrics.map(metric => (
+        <MetricCard
+          key={metric!.id}
+          metric={metric!}
+          onClick={metric!.id !== 'descope_users' ? () => onMetricClick(metric!.id) : undefined}
+        />
       ))}
     </div>
   )

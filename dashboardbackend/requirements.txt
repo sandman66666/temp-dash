@@ -1,0 +1,7 @@
+aiohttp==3.8.5
+certifi==2022.12.7
+opensearch-py==2.3.0
+APScheduler==3.10.1
+SQLAlchemy==1.4.47
+python-dotenv==1.0.0
+APScheduler==3.10.1
