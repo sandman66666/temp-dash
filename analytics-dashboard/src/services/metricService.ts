@@ -1,18 +1,20 @@
-// src/services/metricService.ts
 import axios from 'axios'
 import { MetricResponse } from '../types/metrics'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001'
 
-export const fetchMetrics = async (timeRange?: string): Promise<MetricResponse> => {
+export const fetchMetrics = async (startDate: Date, endDate: Date): Promise<MetricResponse> => {
   try {
     const response = await axios.get(`${API_URL}/metrics`, {
-      params: { timeRange }
+      params: { 
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString()
+      }
     });
 
-    // Transform backend data to match our frontend format
+    // Use an empty object as fallback in case data is undefined
     const backendData = response.data;
-    const metrics = Object.entries(backendData.data).map(([id, metricData]: [string, any]) => ({
+    const metrics = Object.entries(backendData.data || {}).map(([id, metricData]: [string, any]) => ({
       id,
       name: metricData.label,
       description: metricData.description,
@@ -26,8 +28,8 @@ export const fetchMetrics = async (timeRange?: string): Promise<MetricResponse> 
     return {
       metrics,
       timeRange: {
-        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        end: new Date()
+        start: new Date(backendData.timeRange.start),
+        end: new Date(backendData.timeRange.end)
       }
     };
   } catch (error) {
@@ -36,8 +38,8 @@ export const fetchMetrics = async (timeRange?: string): Promise<MetricResponse> 
     return {
       metrics: [],
       timeRange: {
-        start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        end: new Date()
+        start: startDate,
+        end: endDate
       }
     };
   }

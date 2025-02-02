@@ -1,14 +1,28 @@
-// src/components/dashboard/Dashboard.tsx
-import { FC } from 'react'
+import { FC, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchMetrics } from '../../services/metricService'
 import MetricGrid from '../metrics/MetricGrid'
+import DateRangeSelector from '../common/DateRangeSelector'
 
 const Dashboard: FC = () => {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['metrics'],
-    queryFn: () => fetchMetrics('7d'),
+  // Default to last 7 days
+  const defaultEndDate = new Date()
+  const defaultStartDate = new Date()
+  defaultStartDate.setDate(defaultEndDate.getDate() - 7)
+
+  const [startDate, setStartDate] = useState<Date>(defaultStartDate)
+  const [endDate, setEndDate] = useState<Date>(defaultEndDate)
+
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['metrics', startDate, endDate],
+    queryFn: () => fetchMetrics(startDate, endDate),
   })
+
+  const handleDateChange = (start: Date, end: Date) => {
+    setStartDate(start)
+    setEndDate(end)
+    refetch()
+  }
 
   if (isLoading) {
     return (
@@ -34,7 +48,13 @@ const Dashboard: FC = () => {
           Last updated: {new Date().toLocaleString()}
         </div>
       </div>
-      
+      <div className="mb-4">
+        <DateRangeSelector
+          startDate={startDate}
+          endDate={endDate}
+          onDateChange={handleDateChange}
+        />
+      </div>
       {data && <MetricGrid metrics={data.metrics} />}
     </div>
   )

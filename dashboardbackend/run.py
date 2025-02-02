@@ -15,9 +15,9 @@ from src.app import init_app
 import hypercorn.asyncio
 from hypercorn.config import Config
 
-# Configure logging
+# Configure logging to output debug information
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
@@ -30,7 +30,7 @@ async def main():
     config.bind = [f"localhost:{port}"]
     config.use_reloader = True
     
-    logger.info(f"Starting Dashboard Backend server...")
+    logger.info("Starting Dashboard Backend server...")
     logger.info(f"Server running on http://localhost:{port}")
     logger.info("Press CTRL+C to quit")
     
