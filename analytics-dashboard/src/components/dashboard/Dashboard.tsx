@@ -7,6 +7,8 @@ import DateRangeSelector from '../common/DateRangeSelector';
 import UserListModal from '../modal/UserListModal';
 import UserEventsModal from '../modal/UserEventsModal';
 
+type GaugeType = 'thread_users' | 'sketch_users' | 'render_users' | 'medium_chat_users' | 'active_chat_users';
+
 const Dashboard: FC = () => {
   const defaultEndDate = new Date();
   const defaultStartDate = new Date();
@@ -15,6 +17,8 @@ const Dashboard: FC = () => {
   const [startDate, setStartDate] = useState<Date>(defaultStartDate);
   const [endDate, setEndDate] = useState<Date>(defaultEndDate);
   const [showUserListModal, setShowUserListModal] = useState(false);
+  const [userListMode, setUserListMode] = useState<'regular' | 'power'>('regular');
+  const [selectedGaugeType, setSelectedGaugeType] = useState<GaugeType>('thread_users');
   const [selectedUser, setSelectedUser] = useState<{ userId: string, email: string } | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -26,6 +30,24 @@ const Dashboard: FC = () => {
     setStartDate(start);
     setEndDate(end);
     refetch();
+  };
+
+  const handleMetricClick = (metricId: string) => {
+    // Map metric IDs to their corresponding gauge types
+    const gaugeTypeMap: { [key: string]: GaugeType } = {
+      'thread_users': 'thread_users',
+      'sketch_users': 'sketch_users',
+      'render_users': 'render_users',
+      'medium_chat_users': 'medium_chat_users',
+      'active_chat_users': 'active_chat_users'
+    };
+
+    const gaugeType = gaugeTypeMap[metricId];
+    if (gaugeType) {
+      setSelectedGaugeType(gaugeType);
+      setUserListMode('power');
+      setShowUserListModal(true);
+    }
   };
 
   return (
@@ -43,28 +65,35 @@ const Dashboard: FC = () => {
           onDateChange={handleDateChange}
         />
       </div>
+      {isLoading && (
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+        </div>
+      )}
+      {error && (
+        <div className="bg-red-50 text-red-500 p-4 rounded-md">
+          Error loading metrics. Please try again.
+        </div>
+      )}
       {data && (
         <MetricGrid
           metrics={data.metrics}
-          onMetricClick={(metricId: string) => {
-            // For this example, clicking any metric opens the User List Modal.
-            setShowUserListModal(true);
-          }}
+          onMetricClick={handleMetricClick}
         />
       )}
-      <button
-        onClick={() => setShowUserListModal(true)}
-        className="px-4 py-2 bg-blue-500 text-white rounded"
-      >
-        View Users
-      </button>
       {showUserListModal && (
         <UserListModal
-          onClose={() => setShowUserListModal(false)}
+          onClose={() => {
+            setShowUserListModal(false);
+            setSelectedGaugeType('thread_users'); // Reset to default
+          }}
           onSelectUser={(user) => {
             setSelectedUser(user);
             setShowUserListModal(false);
           }}
+          mode={userListMode}
+          gaugeType={selectedGaugeType}
+          timeRange={userListMode === 'power' ? { start: startDate, end: endDate } : undefined}
         />
       )}
       {selectedUser && (
