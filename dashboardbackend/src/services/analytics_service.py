@@ -65,7 +65,7 @@ class AnalyticsService:
                 logger.warning(f"Redis cache retrieval failed: {str(e)}")
 
         try:
-            # Get all metrics
+            # Get metrics for the time range
             total_users = await self._get_total_users(start_date, end_date)
             thread_users = await self._get_thread_users(start_date, end_date)
             sketch_users = await self._get_sketch_users(start_date, end_date)
@@ -77,11 +77,16 @@ class AnalyticsService:
             # Get V1 data if needed
             v1_data = HistoricalData.get_v1_metrics(start_date, end_date, include_v1)
 
-            # Add V1 values directly to metrics
+            # Add V1 values and daily averages
             if include_v1:
                 total_users["value"] += v1_data["total_users"]
+                total_users["daily_average"] = v1_data["daily_averages"]["total_users"]
+                
                 thread_users["value"] += v1_data["active_users"]
+                thread_users["daily_average"] = v1_data["daily_averages"]["active_users"]
+                
                 producers["value"] += v1_data["producers"]
+                producers["daily_average"] = v1_data["daily_averages"]["producers"]
 
             metrics = [
                 {
@@ -172,8 +177,335 @@ class AnalyticsService:
                 }
             }
 
+    async def _get_total_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get total number of users from Descope in time range"""
+        descope_url = os.getenv('DESCOPE_API_URL', 'https://api.descope.com/v1/mgmt/user/search')
+        bearer_token = os.getenv('DESCOPE_BEARER_TOKEN')
+        
+        if not bearer_token:
+            logger.error("Descope bearer token not found")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
+        headers = {
+            'Authorization': f'Bearer {bearer_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get users at end date
+        end_payload = {
+            "tenantIds": [],
+            "text": "",
+            "roleNames": [],
+            "loginIds": [],
+            "ssoAppIds": [],
+            "customAttributes": {},
+            "startDate": "",  # Empty to get all users up to end date
+            "endDate": self._format_date_iso(end_date)
+        }
+
+        # Get users at day before start date
+        day_before_start = start_date - timedelta(days=1)
+        start_payload = {
+            **end_payload,
+            "endDate": self._format_date_iso(day_before_start)
+        }
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Make both API calls in parallel
+                async with session.post(
+                    descope_url,
+                    headers=headers,
+                    json=end_payload,
+                    ssl=ssl_context
+                ) as end_response, session.post(
+                    descope_url,
+                    headers=headers,
+                    json=start_payload,
+                    ssl=ssl_context
+                ) as start_response:
+                    
+                    if end_response.status == 200 and start_response.status == 200:
+                        end_data = await end_response.json()
+                        start_data = await start_response.json()
+                        
+                        end_count = len(end_data.get('users', []))
+                        start_count = len(start_data.get('users', []))
+                        
+                        days_in_range = (end_date - start_date).days + 1
+                        
+                        # Always use end_count as the value
+                        return {
+                            "value": end_count,
+                            "previousValue": start_count,
+                            "trend": "up" if end_count > start_count else "down" if end_count < start_count else "neutral",
+                            "changePercentage": round(((end_count - start_count) / start_count * 100) if start_count > 0 else 100 if end_count > 0 else 0, 2),
+                            "daily_average": end_count / days_in_range if days_in_range > 0 else 0
+                        }
+                    else:
+                        logger.error(f"Descope API error: {end_response.status} or {start_response.status}")
+                        return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+        except Exception as e:
+            logger.error(f"Error fetching total users: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
+    async def _get_thread_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get count of users with message threads in time range"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "handleMessageInThread_start"}},
+                time_filter
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
+                }
+            }
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=0,
+                request_timeout=self.request_timeout
+            )
+            count = result["aggregations"]["unique_users"]["value"]
+            days_in_range = (end_date - start_date).days + 1
+            daily_average = count / days_in_range if days_in_range > 0 else 0
+            
+            return {
+                "value": count,
+                "previousValue": 0,
+                "trend": "up" if count > 0 else "neutral",
+                "changePercentage": 0,
+                "daily_average": daily_average
+            }
+        except Exception as e:
+            logger.error(f"Error getting thread users: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
+    async def _get_sketch_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get count of users who have uploaded sketches in time range"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "uploadSketch_end"}},
+                time_filter
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
+                }
+            }
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=0,
+                request_timeout=self.request_timeout
+            )
+            count = result["aggregations"]["unique_users"]["value"]
+            days_in_range = (end_date - start_date).days + 1
+            daily_average = count / days_in_range if days_in_range > 0 else 0
+            
+            return {
+                "value": count,
+                "previousValue": 0,
+                "trend": "up" if count > 0 else "neutral",
+                "changePercentage": 0,
+                "daily_average": daily_average
+            }
+        except Exception as e:
+            logger.error(f"Error getting sketch users: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
+    async def _get_render_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get count of users who have completed renders in time range"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "renderStart_end"}},
+                time_filter
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
+                }
+            }
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=0,
+                request_timeout=self.request_timeout
+            )
+            count = result["aggregations"]["unique_users"]["value"]
+            days_in_range = (end_date - start_date).days + 1
+            daily_average = count / days_in_range if days_in_range > 0 else 0
+            
+            return {
+                "value": count,
+                "previousValue": 0,
+                "trend": "up" if count > 0 else "neutral",
+                "changePercentage": 0,
+                "daily_average": daily_average
+            }
+        except Exception as e:
+            logger.error(f"Error getting render users: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
+    async def _get_medium_chat_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get users with 5-20 message threads in time range"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "handleMessageInThread_start"}},
+                time_filter
+            ],
+            aggregations={
+                "aggs": {
+                    "users": {
+                        "terms": {
+                            "field": "trace_id.keyword",
+                            "size": 10000
+                        },
+                        "aggs": {
+                            "thread_filter": {
+                                "bucket_selector": {
+                                    "buckets_path": {"count": "_count"},
+                                    "script": "params.count >= 5 && params.count <= 20"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=0,
+                request_timeout=self.request_timeout
+            )
+            count = len(result["aggregations"]["users"]["buckets"])
+            days_in_range = (end_date - start_date).days + 1
+            daily_average = count / days_in_range if days_in_range > 0 else 0
+            
+            return {
+                "value": count,
+                "previousValue": 0,
+                "trend": "up" if count > 0 else "neutral",
+                "changePercentage": 0,
+                "daily_average": daily_average
+            }
+        except Exception as e:
+            logger.error(f"Error getting medium chat users: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
+    async def _get_power_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get users with more than 20 message threads in time range"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "handleMessageInThread_start"}},
+                time_filter
+            ],
+            aggregations={
+                "aggs": {
+                    "users": {
+                        "terms": {
+                            "field": "trace_id.keyword",
+                            "size": 10000
+                        },
+                        "aggs": {
+                            "thread_filter": {
+                                "bucket_selector": {
+                                    "buckets_path": {"count": "_count"},
+                                    "script": "params.count > 20"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=0,
+                request_timeout=self.request_timeout
+            )
+            count = len(result["aggregations"]["users"]["buckets"])
+            days_in_range = (end_date - start_date).days + 1
+            daily_average = count / days_in_range if days_in_range > 0 else 0
+            
+            return {
+                "value": count,
+                "previousValue": 0,
+                "trend": "up" if count > 0 else "neutral",
+                "changePercentage": 0,
+                "daily_average": daily_average
+            }
+        except Exception as e:
+            logger.error(f"Error getting power users: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
+
     async def _get_producers(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get count of producers"""
+        """Get count of producers in time range"""
         time_filter = {
             "range": {
                 self.timestamp_field: {
@@ -203,17 +535,19 @@ class AnalyticsService:
                 request_timeout=self.request_timeout
             )
             count = result["aggregations"]["unique_users"]["value"]
-            previous_count = int(count * 0.9)  # Simulated previous value
-            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
+            days_in_range = (end_date - start_date).days + 1
+            daily_average = count / days_in_range if days_in_range > 0 else 0
+            
             return {
                 "value": count,
-                "previousValue": previous_count,
-                "trend": "up" if count > previous_count else "down",
-                "changePercentage": round(change_percentage, 2)
+                "previousValue": 0,
+                "trend": "up" if count > 0 else "neutral",
+                "changePercentage": 0,
+                "daily_average": daily_average
             }
         except Exception as e:
             logger.error(f"Error getting producers: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "daily_average": 0}
 
     async def get_user_statistics(self, start_date: datetime, end_date: datetime, gauge_type: str) -> List[Dict[str, Any]]:
         """Get user statistics including message and sketch counts"""
@@ -274,303 +608,6 @@ class AnalyticsService:
         except Exception as e:
             logger.error(f"Error getting user statistics: {str(e)}")
             raise
-
-    async def _get_total_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get total number of users from Descope"""
-        descope_url = os.getenv('DESCOPE_API_URL', 'https://api.descope.com/v1/mgmt/user/search')
-        bearer_token = os.getenv('DESCOPE_BEARER_TOKEN')
-        
-        if not bearer_token:
-            logger.error("Descope bearer token not found")
-            return {"value": 0, "previousValue": 0, "trend": "neutral"}
-
-        headers = {
-            'Authorization': f'Bearer {bearer_token}',
-            'Content-Type': 'application/json'
-        }
-        
-        payload = {
-            "tenantIds": [],
-            "text": "",
-            "roleNames": [],
-            "loginIds": [],
-            "ssoAppIds": [],
-            "customAttributes": {},
-            "startDate": self._format_date_iso(start_date),
-            "endDate": self._format_date_iso(end_date)
-        }
-
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    descope_url,
-                    headers=headers,
-                    json=payload,
-                    ssl=ssl_context
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        users = data.get('users', [])
-                        total_count = len(users)
-                        previous_count = int(total_count * 0.9)  # Simulated previous value
-                        change_percentage = ((total_count - previous_count) / previous_count * 100) if previous_count > 0 else 0
-                        return {
-                            "value": total_count,
-                            "previousValue": previous_count,
-                            "trend": "up" if total_count > previous_count else "down",
-                            "changePercentage": round(change_percentage, 2)
-                        }
-                    else:
-                        logger.error(f"Descope API error: {response.status}")
-                        return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
-        except Exception as e:
-            logger.error(f"Error fetching total users: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
-
-    async def _get_thread_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get count of users with message threads"""
-        time_filter = {
-            "range": {
-                self.timestamp_field: {
-                    "gte": self._format_date_os(start_date),
-                    "lte": self._format_date_os(end_date)
-                }
-            }
-        }
-
-        query = self.query_builder.build_composite_query(
-            must_conditions=[
-                {"term": {"event_name.keyword": "handleMessageInThread_start"}},
-                time_filter
-            ],
-            aggregations={
-                "aggs": {
-                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
-                }
-            }
-        )
-
-        try:
-            result = await self.opensearch.search(
-                index=self.index,
-                body=query,
-                size=0,
-                request_timeout=self.request_timeout
-            )
-            count = result["aggregations"]["unique_users"]["value"]
-            previous_count = int(count * 0.9)  # Simulated previous value
-            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
-            return {
-                "value": count,
-                "previousValue": previous_count,
-                "trend": "up" if count > previous_count else "down",
-                "changePercentage": round(change_percentage, 2)
-            }
-        except Exception as e:
-            logger.error(f"Error getting thread users: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
-
-    async def _get_sketch_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get count of users who have uploaded sketches"""
-        time_filter = {
-            "range": {
-                self.timestamp_field: {
-                    "gte": self._format_date_os(start_date),
-                    "lte": self._format_date_os(end_date)
-                }
-            }
-        }
-
-        query = self.query_builder.build_composite_query(
-            must_conditions=[
-                {"term": {"event_name.keyword": "uploadSketch_end"}},
-                time_filter
-            ],
-            aggregations={
-                "aggs": {
-                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
-                }
-            }
-        )
-
-        try:
-            result = await self.opensearch.search(
-                index=self.index,
-                body=query,
-                size=0,
-                request_timeout=self.request_timeout
-            )
-            count = result["aggregations"]["unique_users"]["value"]
-            previous_count = int(count * 0.9)  # Simulated previous value
-            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
-            return {
-                "value": count,
-                "previousValue": previous_count,
-                "trend": "up" if count > previous_count else "down",
-                "changePercentage": round(change_percentage, 2)
-            }
-        except Exception as e:
-            logger.error(f"Error getting sketch users: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
-
-    async def _get_render_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get count of users who have completed renders"""
-        time_filter = {
-            "range": {
-                self.timestamp_field: {
-                    "gte": self._format_date_os(start_date),
-                    "lte": self._format_date_os(end_date)
-                }
-            }
-        }
-
-        query = self.query_builder.build_composite_query(
-            must_conditions=[
-                {"term": {"event_name.keyword": "renderStart_end"}},
-                time_filter
-            ],
-            aggregations={
-                "aggs": {
-                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
-                }
-            }
-        )
-
-        try:
-            result = await self.opensearch.search(
-                index=self.index,
-                body=query,
-                size=0,
-                request_timeout=self.request_timeout
-            )
-            count = result["aggregations"]["unique_users"]["value"]
-            previous_count = int(count * 0.9)  # Simulated previous value
-            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
-            return {
-                "value": count,
-                "previousValue": previous_count,
-                "trend": "up" if count > previous_count else "down",
-                "changePercentage": round(change_percentage, 2)
-            }
-        except Exception as e:
-            logger.error(f"Error getting render users: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
-
-    async def _get_medium_chat_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get users with 5-20 message threads"""
-        time_filter = {
-            "range": {
-                self.timestamp_field: {
-                    "gte": self._format_date_os(start_date),
-                    "lte": self._format_date_os(end_date)
-                }
-            }
-        }
-
-        query = self.query_builder.build_composite_query(
-            must_conditions=[
-                {"term": {"event_name.keyword": "handleMessageInThread_start"}},
-                time_filter
-            ],
-            aggregations={
-                "aggs": {
-                    "users": {
-                        "terms": {
-                            "field": "trace_id.keyword",
-                            "size": 10000
-                        },
-                        "aggs": {
-                            "thread_filter": {
-                                "bucket_selector": {
-                                    "buckets_path": {"count": "_count"},
-                                    "script": "params.count >= 5 && params.count <= 20"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        )
-
-        try:
-            result = await self.opensearch.search(
-                index=self.index,
-                body=query,
-                size=0,
-                request_timeout=self.request_timeout
-            )
-            count = len(result["aggregations"]["users"]["buckets"])
-            previous_count = int(count * 0.9)  # Simulated previous value
-            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
-            return {
-                "value": count,
-                "previousValue": previous_count,
-                "trend": "up" if count > previous_count else "down",
-                "changePercentage": round(change_percentage, 2)
-            }
-        except Exception as e:
-            logger.error(f"Error getting medium chat users: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
-
-    async def _get_power_users(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
-        """Get users with more than 20 message threads"""
-        time_filter = {
-            "range": {
-                self.timestamp_field: {
-                    "gte": self._format_date_os(start_date),
-                    "lte": self._format_date_os(end_date)
-                }
-            }
-        }
-
-        query = self.query_builder.build_composite_query(
-            must_conditions=[
-                {"term": {"event_name.keyword": "handleMessageInThread_start"}},
-                time_filter
-            ],
-            aggregations={
-                "aggs": {
-                    "users": {
-                        "terms": {
-                            "field": "trace_id.keyword",
-                            "size": 10000
-                        },
-                        "aggs": {
-                            "thread_filter": {
-                                "bucket_selector": {
-                                    "buckets_path": {"count": "_count"},
-                                    "script": "params.count > 20"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        )
-
-        try:
-            result = await self.opensearch.search(
-                index=self.index,
-                body=query,
-                size=0,
-                request_timeout=self.request_timeout
-            )
-            count = len(result["aggregations"]["users"]["buckets"])
-            previous_count = int(count * 0.9)  # Simulated previous value
-            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
-            return {
-                "value": count,
-                "previousValue": previous_count,
-                "trend": "up" if count > previous_count else "down",
-                "changePercentage": round(change_percentage, 2)
-            }
-        except Exception as e:
-            logger.error(f"Error getting power users: {str(e)}")
-            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
 
     async def _get_user_render_counts(self, start_date: datetime, end_date: datetime) -> Dict[str, int]:
         """Get render counts for each user"""
