@@ -72,9 +72,16 @@ class AnalyticsService:
             render_users = await self._get_render_users(start_date, end_date)
             medium_users = await self._get_medium_chat_users(start_date, end_date)
             power_users = await self._get_power_users(start_date, end_date)
+            producers = await self._get_producers(start_date, end_date)
 
             # Get V1 data if needed
             v1_data = HistoricalData.get_v1_metrics(start_date, end_date, include_v1)
+
+            # Add V1 values directly to metrics
+            if include_v1:
+                total_users["value"] += v1_data["total_users"]
+                thread_users["value"] += v1_data["active_users"]
+                producers["value"] += v1_data["producers"]
 
             metrics = [
                 {
@@ -83,10 +90,7 @@ class AnalyticsService:
                     "description": "Total number of registered users",
                     "category": "user",
                     "interval": "daily",
-                    "data": {
-                        **total_users,
-                        "v1Value": v1_data["total_users"] if include_v1 else 0
-                    }
+                    "data": total_users
                 },
                 {
                     "id": "thread_users",
@@ -94,10 +98,7 @@ class AnalyticsService:
                     "description": "Users who have started at least one message thread",
                     "category": "engagement",
                     "interval": "daily",
-                    "data": {
-                        **thread_users,
-                        "v1Value": v1_data["active_users"] if include_v1 else 0
-                    }
+                    "data": thread_users
                 },
                 {
                     "id": "render_users",
@@ -130,6 +131,14 @@ class AnalyticsService:
                     "category": "performance",
                     "interval": "daily",
                     "data": sketch_users
+                },
+                {
+                    "id": "producers",
+                    "name": "Producers",
+                    "description": "Total number of producers",
+                    "category": "user",
+                    "interval": "daily",
+                    "data": producers
                 }
             ]
 
@@ -162,6 +171,49 @@ class AnalyticsService:
                     "end": self._format_date_iso(end_date)
                 }
             }
+
+    async def _get_producers(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Get count of producers"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"event_name.keyword": "producer_activity"}},
+                time_filter
+            ],
+            aggregations={
+                "aggs": {
+                    "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
+                }
+            }
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=0,
+                request_timeout=self.request_timeout
+            )
+            count = result["aggregations"]["unique_users"]["value"]
+            previous_count = int(count * 0.9)  # Simulated previous value
+            change_percentage = ((count - previous_count) / previous_count * 100) if previous_count > 0 else 0
+            return {
+                "value": count,
+                "previousValue": previous_count,
+                "trend": "up" if count > previous_count else "down",
+                "changePercentage": round(change_percentage, 2)
+            }
+        except Exception as e:
+            logger.error(f"Error getting producers: {str(e)}")
+            return {"value": 0, "previousValue": 0, "trend": "neutral", "changePercentage": 0}
 
     async def get_user_statistics(self, start_date: datetime, end_date: datetime, gauge_type: str) -> List[Dict[str, Any]]:
         """Get user statistics including message and sketch counts"""
