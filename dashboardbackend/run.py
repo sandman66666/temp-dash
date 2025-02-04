@@ -1,40 +1,57 @@
 """
-Main entry point for running the backend server
+Run the application server
 """
 import asyncio
 import logging
 import os
-import sys
-from pathlib import Path
-
-# Add the project root directory to Python path
-root_dir = Path(__file__).parent
-sys.path.append(str(root_dir))
-
-from src.app import init_app
-import hypercorn.asyncio
 from hypercorn.config import Config
+from hypercorn.asyncio import serve
+from dotenv import load_dotenv
+from src.app import init_app
 
-# Configure logging to output debug information
+# Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
 logger = logging.getLogger(__name__)
 
+# Initialize application
+app = None
+
+async def init():
+    global app
+    try:
+        # Load environment variables
+        load_dotenv()
+        
+        # Initialize application
+        app = await init_app()
+        return app
+    except Exception as e:
+        logger.error(f"Failed to initialize app: {str(e)}")
+        raise
+
 async def main():
-    app = await init_app()
-    config = Config()
-    port = os.getenv('PORT', '5001')
-    config.bind = [f"localhost:{port}"]
-    config.use_reloader = True
-    
-    logger.info("Starting Dashboard Backend server...")
-    logger.info(f"Server running on http://localhost:{port}")
-    logger.info("Press CTRL+C to quit")
-    
-    await hypercorn.asyncio.serve(app, config)
+    """Main entry point"""
+    try:
+        app = await init()
+        
+        # Configure Hypercorn
+        config = Config()
+        config.bind = [f"0.0.0.0:{os.getenv('PORT', '5001')}"]
+        config.use_reloader = True
+        
+        # Start server
+        await serve(app, config)
+        
+    except Exception as e:
+        logger.error(f"Failed to start server: {str(e)}")
+        raise
+
+# Initialize app for Flask CLI
+asyncio.run(init())
 
 if __name__ == "__main__":
     asyncio.run(main())

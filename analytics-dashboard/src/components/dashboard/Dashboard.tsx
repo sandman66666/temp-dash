@@ -1,106 +1,82 @@
-// analytics-dashboard/src/components/dashboard/Dashboard.tsx
-import { FC, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { fetchMetrics } from '../../services/metricService';
+import React, { useState, useEffect } from 'react';
 import MetricGrid from '../metrics/MetricGrid';
 import DateRangeSelector from '../common/DateRangeSelector';
-import UserListModal from '../modal/UserListModal';
-import UserEventsModal from '../modal/UserEventsModal';
+import UserTable from '../users/UserTable';
+import { fetchMetrics } from '../../services/metricService';
+import { Metric } from '../../types/metrics';
 
-type GaugeType = 'thread_users' | 'sketch_users' | 'render_users' | 'medium_chat_users' | 'active_chat_users';
+const Dashboard: React.FC = () => {
+  const [metrics, setMetrics] = useState<Metric[]>([]);
+  const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [includeV1, setIncludeV1] = useState<boolean>(true);
+  const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
-const Dashboard: FC = () => {
-  const defaultEndDate = new Date();
-  const defaultStartDate = new Date();
-  defaultStartDate.setDate(defaultEndDate.getDate() - 7);
+  useEffect(() => {
+    loadMetrics();
+  }, [startDate, endDate, includeV1]);
 
-  const [startDate, setStartDate] = useState<Date>(defaultStartDate);
-  const [endDate, setEndDate] = useState<Date>(defaultEndDate);
-  const [showUserListModal, setShowUserListModal] = useState(false);
-  const [userListMode, setUserListMode] = useState<'regular' | 'power'>('regular');
-  const [selectedGaugeType, setSelectedGaugeType] = useState<GaugeType>('thread_users');
-  const [selectedUser, setSelectedUser] = useState<{ userId: string, email: string } | null>(null);
+  const loadMetrics = async () => {
+    try {
+      setLoading(true);
+      const response = await fetchMetrics(startDate, endDate, includeV1);
+      setMetrics(response.metrics);
+    } catch (error) {
+      console.error('Error loading metrics:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['metrics', startDate, endDate],
-    queryFn: () => fetchMetrics(startDate, endDate),
-  });
+  const handleMetricClick = (metricId: string) => {
+    setSelectedMetric(metricId);
+  };
 
   const handleDateChange = (start: Date, end: Date) => {
     setStartDate(start);
     setEndDate(end);
-    refetch();
-  };
-
-  const handleMetricClick = (metricId: string) => {
-    // Map metric IDs to their corresponding gauge types
-    const gaugeTypeMap: { [key: string]: GaugeType } = {
-      'thread_users': 'thread_users',
-      'sketch_users': 'sketch_users',
-      'render_users': 'render_users',
-      'medium_chat_users': 'medium_chat_users',
-      'active_chat_users': 'active_chat_users'
-    };
-
-    const gaugeType = gaugeTypeMap[metricId];
-    if (gaugeType) {
-      setSelectedGaugeType(gaugeType);
-      setUserListMode('power');
-      setShowUserListModal(true);
-    }
   };
 
   return (
-    <div className="space-y-6 pt-16">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <div className="text-sm text-gray-500">
-          Last updated: {new Date().toLocaleString()}
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h1>
+        <div className="flex items-center space-x-4">
+          <label className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              checked={includeV1}
+              onChange={(e) => setIncludeV1(e.target.checked)}
+              className="form-checkbox h-4 w-4 text-blue-600"
+            />
+            <span className="text-sm text-gray-700">Include V1</span>
+          </label>
+          <DateRangeSelector
+            startDate={startDate}
+            endDate={endDate}
+            onDateChange={handleDateChange}
+          />
         </div>
       </div>
-      <div className="mb-4">
-        <DateRangeSelector
-          startDate={startDate}
-          endDate={endDate}
-          onDateChange={handleDateChange}
-        />
-      </div>
-      {isLoading && (
-        <div className="flex justify-center items-center py-8">
+
+      {loading ? (
+        <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
         </div>
-      )}
-      {error && (
-        <div className="bg-red-50 text-red-500 p-4 rounded-md">
-          Error loading metrics. Please try again.
-        </div>
-      )}
-      {data && (
-        <MetricGrid
-          metrics={data.metrics}
-          onMetricClick={handleMetricClick}
-        />
-      )}
-      {showUserListModal && (
-        <UserListModal
-          onClose={() => {
-            setShowUserListModal(false);
-            setSelectedGaugeType('thread_users'); // Reset to default
-          }}
-          onSelectUser={(user) => {
-            setSelectedUser(user);
-            setShowUserListModal(false);
-          }}
-          mode={userListMode}
-          gaugeType={selectedGaugeType}
-          timeRange={userListMode === 'power' ? { start: startDate, end: endDate } : undefined}
-        />
-      )}
-      {selectedUser && (
-        <UserEventsModal
-          userId={selectedUser.userId}
-          onClose={() => setSelectedUser(null)}
-        />
+      ) : (
+        <>
+          <MetricGrid metrics={metrics} onMetricClick={handleMetricClick} />
+          {selectedMetric && (
+            <UserTable 
+              gaugeType={selectedMetric as any}
+              timeRange={{
+                start: startDate,
+                end: endDate
+              }}
+            />
+          )}
+        </>
       )}
     </div>
   );

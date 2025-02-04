@@ -1,85 +1,48 @@
-import axios from 'axios'
-import { MetricResponse, Metric } from '../types/metrics'
+import axios from 'axios';
+import { MetricResponse, Metric, UserStats } from '../types/metrics';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
-export interface GaugeUser {
-  email: string;
-  trace_id: string;
-}
-
-export const fetchMetrics = async (startDate: Date, endDate: Date): Promise<MetricResponse> => {
+export const fetchMetrics = async (
+  startDate: Date,
+  endDate: Date,
+  includeV1: boolean = true
+): Promise<MetricResponse> => {
   try {
     const response = await axios.get(`${API_URL}/metrics`, {
-      params: { 
+      params: {
         startDate: startDate.toISOString(),
-        endDate: endDate.toISOString()
+        endDate: endDate.toISOString(),
+        includeV1
       }
     });
 
-    const backendData = response.data;
-    
-    if (!backendData || !backendData.metrics || !Array.isArray(backendData.metrics)) {
+    if (!response.data || !response.data.metrics) {
+      console.error('Invalid response format:', response.data);
       throw new Error('Invalid response format from backend');
     }
 
-    // Transform metrics while preserving all the data from backend
-    const metrics: Metric[] = backendData.metrics.map((metricData: any) => ({
-      id: metricData.id,
-      name: metricData.name || metricData.id.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-      description: metricData.description || '',
-      category: metricData.category || 'user',
-      interval: 'daily',
+    // Transform metrics to ensure all required fields are present
+    const metrics: Metric[] = response.data.metrics.map((metric: any) => ({
+      id: metric.id,
+      name: metric.name,
+      description: metric.description,
+      category: metric.category,
+      interval: metric.interval,
       data: {
-        value: Number(metricData.data.value) || 0,
-        previousValue: metricData.data.previousValue ? Number(metricData.data.previousValue) : undefined,
-        trend: metricData.data.trend || 'neutral',
-        changePercentage: metricData.data.changePercentage
+        value: Number(metric.data.value) || 0,
+        previousValue: metric.data.previousValue ? Number(metric.data.previousValue) : undefined,
+        trend: metric.data.trend || 'neutral',
+        changePercentage: metric.data.changePercentage,
+        v1Value: metric.data.v1Value ? Number(metric.data.v1Value) : undefined
       }
     }));
-
-    // Ensure all required metrics are present with correct IDs
-    const requiredMetrics = [
-      'descope_users',
-      'thread_users',
-      'render_users',
-      'active_chat_users',
-      'medium_chat_users',
-      'sketch_users'
-    ];
-
-    // Add any missing metrics with zero values
-    requiredMetrics.forEach(metricId => {
-      if (!metrics.find(m => m.id === metricId)) {
-        metrics.push({
-          id: metricId,
-          name: metricId.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
-          description: 'No data available',
-          category: metricId.includes('chat') || metricId === 'thread_users' ? 'engagement' : 'user',
-          interval: 'daily',
-          data: {
-            value: 0,
-            trend: 'neutral'
-          }
-        });
-      }
-    });
-
-    // Sort metrics to match the order in MetricGrid
-    metrics.sort((a, b) => {
-      const order = requiredMetrics.indexOf(a.id) - requiredMetrics.indexOf(b.id);
-      return order;
-    });
-
-    // Log the transformed metrics for debugging
-    console.log('Backend data:', backendData);
-    console.log('Transformed metrics:', metrics);
 
     return {
       metrics,
       timeRange: {
-        start: new Date(backendData.timeRange.start),
-        end: new Date(backendData.timeRange.end)
+        start: new Date(response.data.timeRange.start),
+        end: new Date(response.data.timeRange.end)
       }
     };
   } catch (error) {
@@ -100,7 +63,8 @@ export const fetchMetrics = async (startDate: Date, endDate: Date): Promise<Metr
       interval: 'daily',
       data: {
         value: 0,
-        trend: 'neutral'
+        trend: 'neutral',
+        changePercentage: 0
       }
     }));
 
@@ -112,24 +76,30 @@ export const fetchMetrics = async (startDate: Date, endDate: Date): Promise<Metr
       }
     };
   }
-}
+};
 
-export const fetchPowerUsers = async (startDate: Date, endDate: Date): Promise<GaugeUser[]> => {
+export const fetchUserStats = async (
+  startDate: Date,
+  endDate: Date,
+  gaugeType: string
+): Promise<UserStats[]> => {
   try {
-    const response = await axios.get(`${API_URL}/metrics/gauge-users`, {
+    const response = await axios.get<{ status: string; data: UserStats[] }>(`${API_URL}/metrics/user-stats`, {
       params: {
         startDate: startDate.toISOString(),
-        endDate: endDate.toISOString()
+        endDate: endDate.toISOString(),
+        gaugeType
       }
     });
 
-    if (response.data.status === 'success') {
-      // The backend now returns an array of objects with email and trace_id
+    if (response.data.status === 'success' && Array.isArray(response.data.data)) {
       return response.data.data;
     }
+
+    console.error('Invalid response format:', response.data);
     return [];
   } catch (error) {
-    console.error('Error fetching power users:', error);
+    console.error('Error fetching user statistics:', error);
     return [];
   }
-}
+};

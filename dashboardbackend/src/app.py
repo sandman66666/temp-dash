@@ -1,54 +1,48 @@
 """
-Main application entry point
+Main application factory
 """
+import logging
+import os
 from quart import Quart
 from quart_cors import cors
-import logging
 from dotenv import load_dotenv
 from src.core import init_services
-import os
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
-
-def create_app():
-    """Create and configure application"""
-    app = Quart(__name__)
-    
-    # Configure CORS
-    app = cors(
-        app, 
-        allow_origin=["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_headers=["Content-Type"],
-        allow_methods=["GET", "POST", "OPTIONS"]
-    )
-    
-    logger.info("Registering application blueprints...")
+def create_app() -> Quart:
+    """Create and configure the Quart application"""
     try:
-        from src.api.health import init_app as init_health
-        from src.api.metrics import init_app as init_metrics
-        from src.api.tasks import init_app as init_tasks
-        from src.api.descope import init_app as init_descope
+        logger.info("Registering application blueprints...")
         
-        init_health(app)
-        init_metrics(app)
-        init_tasks(app)
-        init_descope(app)
+        # Load environment variables
+        load_dotenv()
+        
+        # Create Quart app
+        app = Quart(__name__)
+        
+        # Enable CORS
+        app = cors(app, allow_origin="*")
+        
+        # Register blueprints
+        from src.api.metrics import metrics_bp
+        from src.api.health import health_bp
+        
+        app.register_blueprint(metrics_bp, url_prefix='/metrics')
+        app.register_blueprint(health_bp, url_prefix='/health')
         
         logger.info("Blueprints registered successfully")
+        return app
+        
     except Exception as e:
         logger.error(f"Failed to register blueprints: {str(e)}")
         raise
 
-    return app
-
-async def init_app():
-    """Initialize application and all services"""
+async def init_app() -> Quart:
+    """Initialize the application"""
     app = create_app()
+    
+    # Initialize services
     await init_services(app)
+    
     return app

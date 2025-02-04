@@ -1,4 +1,3 @@
-// analytics-dashboard/src/components/metrics/MetricGrid.tsx
 import { FC } from 'react'
 import { Metric } from '../../types/metrics'
 import MetricCard from './MetricCard'
@@ -6,9 +5,10 @@ import MetricCard from './MetricCard'
 interface MetricGridProps {
   metrics: Metric[]
   onMetricClick: (metricId: string) => void
+  includeV1?: boolean
 }
 
-const MetricGrid: FC<MetricGridProps> = ({ metrics, onMetricClick }) => {
+const MetricGrid: FC<MetricGridProps> = ({ metrics, onMetricClick, includeV1 = true }) => {
   // Define the order of metrics and their display names
   const orderedMetricIds = [
     'descope_users',
@@ -68,6 +68,7 @@ const MetricGrid: FC<MetricGridProps> = ({ metrics, onMetricClick }) => {
           key={metric!.id}
           metric={metric!}
           onClick={metric!.id !== 'descope_users' ? () => onMetricClick(metric!.id) : undefined}
+          includeV1={includeV1}
         />
       ))}
     </div>
