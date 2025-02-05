@@ -1,31 +1,23 @@
-// src/components/layout/Sidebar.tsx
-import React, { useState, useEffect } from 'react'
-import { Home, BarChart2, Users, Activity } from 'lucide-react'
+// src/components/layout/dub_Sidebar.tsx
+import React, { useState } from 'react'
+import { Home, BarChart2, Users, LineChart } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 
 const navigation = [
-  { name: 'Overview', icon: Home, path: '/dashboard' },
-  { name: 'Analytics', icon: BarChart2, path: '/dashboard' },
-  { name: 'Users', icon: Users, path: '/dashboard' },
-  { name: 'User Activity', icon: Activity, path: '/user-activity' },
+  { name: 'Overview', icon: Home, path: '/' },
+  { name: 'Analytics', icon: BarChart2, path: '/analytics' },
+  { name: 'User Activity', icon: LineChart, path: '/user-activity' },
+  { name: 'Users', icon: Users, path: '/users' },
 ]
 
 const Sidebar = () => {
   const navigate = useNavigate()
   const location = useLocation()
-  const [selected, setSelected] = useState(navigation[0].name)
-
-  useEffect(() => {
-    const currentPath = location.pathname
-    const currentNav = navigation.find(nav => nav.path === currentPath)
-    if (currentNav) {
-      setSelected(currentNav.name)
-    }
-  }, [location])
   
-  const handleNavigation = (item: typeof navigation[0]) => {
-    setSelected(item.name)
-    navigate(item.path)
+  const isActive = (path: string) => {
+    if (path === '/' && location.pathname === '/') return true
+    if (path !== '/' && location.pathname.startsWith(path)) return true
+    return false
   }
   
   return (
@@ -34,15 +26,15 @@ const Sidebar = () => {
         <div className="px-3 space-y-1">
           {navigation.map((item) => {
             const Icon = item.icon
-            const isActive = selected === item.name
+            const active = isActive(item.path)
             
             return (
               <button
                 key={item.name}
-                onClick={() => handleNavigation(item)}
+                onClick={() => navigate(item.path)}
                 className={`
-                  flex items-center w-full px-3 py-2 text-sm rounded-md
-                  ${isActive 
+                  flex items-center w-full px-3 py-2 text-sm rounded-md transition-colors
+                  ${active 
                     ? 'bg-gray-100 text-gray-900 font-medium' 
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}
                 `}
