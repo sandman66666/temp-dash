@@ -65,7 +65,10 @@ class AnalyticsService:
                 logger.warning(f"Redis cache retrieval failed: {str(e)}")
 
         try:
-            # Get metrics for the time range
+            # Get V1 data
+            v1_data = HistoricalData.get_v1_metrics(start_date, end_date, include_v1)
+
+            # Get metrics for the time range from OpenSearch
             total_users = await self._get_total_users(start_date, end_date)
             thread_users = await self._get_thread_users(start_date, end_date)
             sketch_users = await self._get_sketch_users(start_date, end_date)
@@ -74,19 +77,15 @@ class AnalyticsService:
             power_users = await self._get_power_users(start_date, end_date)
             producers = await self._get_producers(start_date, end_date)
 
-            # Get V1 data if needed
-            v1_data = HistoricalData.get_v1_metrics(start_date, end_date, include_v1)
-
-            # Add V1 values and daily averages
-            if include_v1:
-                total_users["value"] += v1_data["total_users"]
-                total_users["daily_average"] = v1_data["daily_averages"]["total_users"]
-                
-                thread_users["value"] += v1_data["active_users"]
-                thread_users["daily_average"] = v1_data["daily_averages"]["active_users"]
-                
-                producers["value"] += v1_data["producers"]
-                producers["daily_average"] = v1_data["daily_averages"]["producers"]
+            # Combine V1 and OpenSearch data
+            total_users["value"] += v1_data["total_users"]
+            total_users["daily_average"] += v1_data["daily_averages"]["total_users"]
+            
+            thread_users["value"] += v1_data["active_users"]
+            thread_users["daily_average"] += v1_data["daily_averages"]["active_users"]
+            
+            producers["value"] += v1_data["producers"]
+            producers["daily_average"] += v1_data["daily_averages"]["producers"]
 
             metrics = [
                 {
@@ -203,11 +202,10 @@ class AnalyticsService:
             "endDate": self._format_date_iso(end_date)
         }
 
-        # Get users at day before start date
-        day_before_start = start_date - timedelta(days=1)
+        # Get users at start date
         start_payload = {
             **end_payload,
-            "endDate": self._format_date_iso(day_before_start)
+            "endDate": self._format_date_iso(start_date)
         }
 
         ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -237,14 +235,14 @@ class AnalyticsService:
                         start_count = len(start_data.get('users', []))
                         
                         days_in_range = (end_date - start_date).days + 1
+                        new_users = end_count - start_count
                         
-                        # Always use end_count as the value
                         return {
-                            "value": end_count,
+                            "value": new_users,
                             "previousValue": start_count,
-                            "trend": "up" if end_count > start_count else "down" if end_count < start_count else "neutral",
-                            "changePercentage": round(((end_count - start_count) / start_count * 100) if start_count > 0 else 100 if end_count > 0 else 0, 2),
-                            "daily_average": end_count / days_in_range if days_in_range > 0 else 0
+                            "trend": "up" if new_users > 0 else "down" if new_users < 0 else "neutral",
+                            "changePercentage": round((new_users / start_count * 100) if start_count > 0 else 100 if new_users > 0 else 0, 2),
+                            "daily_average": new_users / days_in_range if days_in_range > 0 else 0
                         }
                     else:
                         logger.error(f"Descope API error: {end_response.status} or {start_response.status}")

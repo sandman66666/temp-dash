@@ -2,7 +2,7 @@
 Historical data for V1 metrics
 """
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any
+from typing import Dict, Any, List
 from calendar import monthrange
 
 class HistoricalData:
@@ -47,81 +47,27 @@ class HistoricalData:
         return monthrange(date.year, date.month)[1]
 
     @classmethod
-    def _calculate_daily_growth(cls, start_value: int, end_value: int, days: int) -> float:
-        """Calculate average daily growth between two values"""
-        return (end_value - start_value) / days if days > 0 else 0
-
-    @classmethod
-    def _get_value_at_date(cls, target_date: datetime) -> Dict[str, int]:
-        """Get values at a specific date with daily averages"""
-        target_date = cls._ensure_timezone(target_date)
-        
-        # Before first data point
-        if target_date < cls.V1_DATA[0]["date"]:
-            return {
-                "total_users": 0,
-                "active_users": 0,
-                "producers": 0
-            }
-            
-        # After last data point
-        if target_date >= cls.V1_DATA[-1]["date"]:
-            return {
-                "total_users": cls.V1_DATA[-1]["total_users"],
-                "active_users": cls.V1_DATA[-1]["active_users"],
-                "producers": cls.V1_DATA[-1]["producers"]
-            }
-
-        # Find the appropriate data points
+    def _spread_monthly_data(cls) -> List[Dict[str, Any]]:
+        """Spread monthly data evenly across days"""
+        daily_data = []
         for i in range(len(cls.V1_DATA) - 1):
-            if cls.V1_DATA[i]["date"] <= target_date < cls.V1_DATA[i + 1]["date"]:
-                # Calculate days between points
-                days_between = (cls.V1_DATA[i + 1]["date"] - cls.V1_DATA[i]["date"]).days
-                days_from_start = (target_date - cls.V1_DATA[i]["date"]).days
+            start_date = cls.V1_DATA[i]["date"]
+            end_date = cls.V1_DATA[i + 1]["date"]
+            days = (end_date - start_date).days
 
-                # Calculate daily growth rates
-                total_users_daily = cls._calculate_daily_growth(
-                    cls.V1_DATA[i]["total_users"],
-                    cls.V1_DATA[i + 1]["total_users"],
-                    days_between
-                )
-                active_users_daily = cls._calculate_daily_growth(
-                    cls.V1_DATA[i]["active_users"],
-                    cls.V1_DATA[i + 1]["active_users"],
-                    days_between
-                )
-                producers_daily = cls._calculate_daily_growth(
-                    cls.V1_DATA[i]["producers"],
-                    cls.V1_DATA[i + 1]["producers"],
-                    days_between
-                )
+            for j in range(days):
+                current_date = start_date + timedelta(days=j)
+                progress = j / days
+                daily_data.append({
+                    "date": current_date,
+                    "total_users": int(cls.V1_DATA[i]["total_users"] + progress * (cls.V1_DATA[i + 1]["total_users"] - cls.V1_DATA[i]["total_users"])),
+                    "active_users": int(cls.V1_DATA[i]["active_users"] + progress * (cls.V1_DATA[i + 1]["active_users"] - cls.V1_DATA[i]["active_users"])),
+                    "producers": int(cls.V1_DATA[i]["producers"] + progress * (cls.V1_DATA[i + 1]["producers"] - cls.V1_DATA[i]["producers"]))
+                })
 
-                # Calculate values at target date
-                total_users = int(cls.V1_DATA[i]["total_users"] + (total_users_daily * days_from_start))
-                active_users = int(cls.V1_DATA[i]["active_users"] + (active_users_daily * days_from_start))
-                producers = int(cls.V1_DATA[i]["producers"] + (producers_daily * days_from_start))
-                
-                return {
-                    "total_users": total_users,
-                    "active_users": active_users,
-                    "producers": producers,
-                    "daily_growth": {
-                        "total_users": total_users_daily,
-                        "active_users": active_users_daily,
-                        "producers": producers_daily
-                    }
-                }
-        
-        return {
-            "total_users": cls.V1_DATA[-1]["total_users"],
-            "active_users": cls.V1_DATA[-1]["active_users"],
-            "producers": cls.V1_DATA[-1]["producers"],
-            "daily_growth": {
-                "total_users": 0,
-                "active_users": 0,
-                "producers": 0
-            }
-        }
+        # Add the last day
+        daily_data.append(cls.V1_DATA[-1])
+        return daily_data
 
     @classmethod
     def get_v1_metrics(cls, start_date: datetime, end_date: datetime, include_v1: bool = True) -> Dict[str, Any]:
@@ -138,14 +84,23 @@ class HistoricalData:
                 }
             }
 
-        # Get values and daily growth rates at start and end dates
-        end_data = cls._get_value_at_date(end_date)
-        start_data = cls._get_value_at_date(start_date - timedelta(days=1))
+        start_date = cls._ensure_timezone(start_date)
+        end_date = cls._ensure_timezone(end_date)
 
-        # Calculate activity during time range
-        total_users = end_data["total_users"] - start_data["total_users"]
-        active_users = end_data["active_users"] - start_data["active_users"]
-        producers = end_data["producers"] - start_data["producers"]
+        # Spread monthly data to daily data
+        daily_data = cls._spread_monthly_data()
+
+        # Find the closest data points before start_date and at/after end_date
+        start_index = next((i for i, d in enumerate(daily_data) if d["date"] >= start_date), 0)
+        end_index = next((i for i, d in enumerate(daily_data) if d["date"] > end_date), len(daily_data)) - 1
+
+        if start_index > 0:
+            start_index -= 1  # Include the day before start_date
+
+        # Calculate the differences
+        total_users = daily_data[end_index]["total_users"] - daily_data[start_index]["total_users"]
+        active_users = daily_data[end_index]["active_users"] - daily_data[start_index]["active_users"]
+        producers = daily_data[end_index]["producers"] - daily_data[start_index]["producers"]
 
         # Calculate days in range
         days_in_range = (end_date - start_date).days + 1
