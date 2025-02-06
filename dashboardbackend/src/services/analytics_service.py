@@ -798,3 +798,35 @@ class AnalyticsService:
     def _format_date_iso(self, dt: datetime) -> str:
         """Format datetime to ISO string"""
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    async def get_user_events(self, trace_id: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """Fetch user events based on trace_id"""
+        time_filter = {
+            "range": {
+                self.timestamp_field: {
+                    "gte": self._format_date_os(start_date),
+                    "lte": self._format_date_os(end_date)
+                }
+            }
+        }
+
+        query = self.query_builder.build_composite_query(
+            must_conditions=[
+                {"term": {"trace_id.keyword": trace_id}},
+                time_filter
+            ],
+            sort=[{self.timestamp_field: {"order": "desc"}}]
+        )
+
+        try:
+            result = await self.opensearch.search(
+                index=self.index,
+                body=query,
+                size=100,  # Limit to 100 most recent events
+                request_timeout=self.request_timeout
+            )
+            events = [hit["_source"] for hit in result["hits"]["hits"]]
+            return events
+        except Exception as e:
+            logger.error(f"Error fetching user events: {str(e)}")
+            return []

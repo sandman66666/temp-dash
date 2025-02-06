@@ -1,5 +1,5 @@
 """OpenSearch query builder utility"""
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 from datetime import datetime
 from dateutil.parser import parse
 
@@ -83,11 +83,12 @@ class OpenSearchQueryBuilder:
 
     def build_composite_query(
         self,
-        must_conditions: list,
-        source_fields: Optional[list] = None,
-        aggregations: Optional[Dict] = None,
-        pagination: Optional[Dict] = None,
-    ) -> Dict:
+        must_conditions: List[Dict[str, Any]],
+        source_fields: Optional[List[str]] = None,
+        aggregations: Optional[Dict[str, Any]] = None,
+        pagination: Optional[Dict[str, Any]] = None,
+        sort: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Build a complete composite query combining multiple conditions.
 
@@ -96,6 +97,7 @@ class OpenSearchQueryBuilder:
             source_fields: List of fields to include in _source
             aggregations: Aggregation queries
             pagination: Pagination parameters
+            sort: List of sort conditions
 
         Returns:
             Dict containing the complete query
@@ -110,5 +112,8 @@ class OpenSearchQueryBuilder:
 
         if pagination:
             query.update(pagination)
+
+        if sort:
+            query["sort"] = sort
 
         return query

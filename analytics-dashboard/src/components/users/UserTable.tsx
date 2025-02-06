@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchUserStats } from '../../services/metricService';
+import UserEventsModal from '../modal/UserEventsModal';
 
 export interface UserStats {
   email: string;
@@ -21,6 +22,7 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeR
   const [users, setUsers] = useState<UserStats[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<{
     key: keyof UserStats;
     direction: 'ascending' | 'descending';
@@ -53,6 +55,14 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeR
         ? 'descending' 
         : 'ascending'
     }));
+  };
+
+  const handleUserClick = (userId: string) => {
+    setSelectedUserId(userId);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedUserId(null);
   };
 
   const sortedUsers = [...users].sort((a, b) => {
@@ -158,7 +168,8 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeR
               {sortedUsers.map((user, index) => (
                 <tr 
                   key={user.trace_id || index}
-                  className="hover:bg-gray-50 transition-colors duration-150 ease-in-out"
+                  className="hover:bg-gray-50 transition-colors duration-150 ease-in-out cursor-pointer"
+                  onClick={() => handleUserClick(user.trace_id)}
                 >
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-blue-600 hover:text-blue-800">
@@ -182,6 +193,13 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeR
             </tbody>
           </table>
         </div>
+      )}
+
+      {selectedUserId && (
+        <UserEventsModal
+          userId={selectedUserId}
+          onClose={handleCloseModal}
+        />
       )}
     </div>
   );

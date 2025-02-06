@@ -106,3 +106,62 @@ async def get_user_stats():
         return jsonify({
             'error': str(e)
         }), 500
+
+@metrics_bp.route('/user-events', methods=['GET'])
+async def get_user_events():
+    """Get user events"""
+    try:
+        # Parse parameters
+        trace_id = request.args.get('traceId')
+        start_date = request.args.get('startDate')
+        end_date = request.args.get('endDate')
+
+        current_app.logger.info(f"Fetching user events: traceId={trace_id}, start={start_date}, end={end_date}")
+
+        if not all([trace_id, start_date, end_date]):
+            current_app.logger.error("Missing required parameters")
+            return jsonify({
+                'status': 'error',
+                'error': 'Missing required parameters'
+            }), 400
+
+        try:
+            # Convert dates with UTC timezone
+            start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+
+            # Ensure dates are in UTC
+            if start_date.tzinfo is None:
+                start_date = start_date.replace(tzinfo=timezone.utc)
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
+
+            # Get user events
+            events = await analytics_service.get_user_events(
+                trace_id=trace_id,
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            return jsonify({
+                'status': 'success',
+                'data': events,
+                'timeRange': {
+                    'start': start_date.isoformat(),
+                    'end': end_date.isoformat()
+                }
+            })
+
+        except ValueError as e:
+            current_app.logger.error(f"Date format error: {e}")
+            return jsonify({
+                'status': 'error',
+                'error': f'Invalid date format: {str(e)}'
+            }), 400
+
+    except Exception as e:
+        current_app.logger.error(f"Error in get_user_events: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500

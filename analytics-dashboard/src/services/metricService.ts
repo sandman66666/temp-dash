@@ -103,3 +103,46 @@ export const fetchUserStats = async (
     return [];
   }
 };
+
+export interface UserEvent {
+  event_name: string;
+  timestamp: string;
+  trace_id: string;
+  flow_id?: string;
+  [key: string]: any;
+}
+
+export interface UserEventsResponse {
+  status: string;
+  data: UserEvent[];
+  timeRange: {
+    start: string;
+    end: string;
+  };
+}
+
+export const fetchUserEvents = async (
+  userId: string,
+  startDate: Date = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Default to last 30 days
+  endDate: Date = new Date()
+): Promise<UserEventsResponse> => {
+  try {
+    const response = await axios.get<UserEventsResponse>(`${API_URL}/metrics/user-events`, {
+      params: { 
+        traceId: userId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString()
+      }
+    });
+
+    if (response.data.status !== 'success' || !Array.isArray(response.data.data)) {
+      console.error('Invalid response format:', response.data);
+      throw new Error('Invalid response format from backend');
+    }
+
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching user events:', error);
+    throw error;
+  }
+};
