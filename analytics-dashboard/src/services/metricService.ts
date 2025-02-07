@@ -18,11 +18,9 @@ export const fetchMetrics = async (
     });
 
     if (!response.data || !response.data.metrics) {
-      console.error('Invalid response format:', response.data);
       throw new Error('Invalid response format from backend');
     }
 
-    // Transform metrics to ensure all required fields are present
     const metrics: Metric[] = response.data.metrics.map((metric: any) => ({
       id: metric.id,
       name: metric.name,
@@ -30,11 +28,11 @@ export const fetchMetrics = async (
       category: metric.category,
       interval: metric.interval,
       data: {
-        value: Number(metric.data.value) || 0,
-        previousValue: metric.data.previousValue ? Number(metric.data.previousValue) : undefined,
+        value: metric.data.value !== undefined ? Number(metric.data.value) : undefined,
+        previousValue: metric.data.previousValue !== undefined ? Number(metric.data.previousValue) : undefined,
         trend: metric.data.trend || 'neutral',
         changePercentage: metric.data.changePercentage,
-        v1Value: metric.data.v1Value ? Number(metric.data.v1Value) : undefined
+        v1Value: metric.data.v1Value !== undefined ? Number(metric.data.v1Value) : undefined
       }
     }));
 
@@ -45,10 +43,10 @@ export const fetchMetrics = async (
         end: new Date(response.data.timeRange.end)
       }
     };
+
   } catch (error) {
     console.error('Error fetching metrics:', error);
-    // Return empty data with all required metrics if the API fails
-    const emptyMetrics: Metric[] = [
+    const defaultMetrics: Metric[] = [
       'descope_users',
       'thread_users',
       'render_users',
@@ -69,11 +67,8 @@ export const fetchMetrics = async (
     }));
 
     return {
-      metrics: emptyMetrics,
-      timeRange: {
-        start: startDate,
-        end: endDate
-      }
+      metrics: defaultMetrics,
+      timeRange: { start: startDate, end: endDate }
     };
   }
 };
@@ -83,6 +78,7 @@ export const fetchUserStats = async (
   endDate: Date,
   gaugeType: string
 ): Promise<UserStats[]> => {
+  console.log(`Fetching user stats for gauge type: ${gaugeType}, start date: ${startDate}, end date: ${endDate}`);
   try {
     const response = await axios.get<{ status: string; data: UserStats[] }>(`${API_URL}/metrics/user-stats`, {
       params: {
@@ -92,14 +88,20 @@ export const fetchUserStats = async (
       }
     });
 
+    console.log('User stats API response:', response.data);
+
     if (response.data.status === 'success' && Array.isArray(response.data.data)) {
+      console.log(`Successfully fetched ${response.data.data.length} user stats`);
       return response.data.data;
     }
-
-    console.error('Invalid response format:', response.data);
+    console.warn('Unexpected response format from user stats API:', response.data);
     return [];
   } catch (error) {
-    console.error('Error fetching user statistics:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Axios error fetching user statistics:', error.response?.data || error.message);
+    } else {
+      console.error('Error fetching user statistics:', error);
+    }
     return [];
   }
 };
@@ -123,7 +125,7 @@ export interface UserEventsResponse {
 
 export const fetchUserEvents = async (
   userId: string,
-  startDate: Date = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Default to last 30 days
+  startDate: Date = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
   endDate: Date = new Date()
 ): Promise<UserEventsResponse> => {
   try {
@@ -136,13 +138,31 @@ export const fetchUserEvents = async (
     });
 
     if (response.data.status !== 'success' || !Array.isArray(response.data.data)) {
-      console.error('Invalid response format:', response.data);
       throw new Error('Invalid response format from backend');
     }
 
     return response.data;
   } catch (error) {
     console.error('Error fetching user events:', error);
+    throw error;
+  }
+};
+
+export const setMetricTarget = async (metricId: string, target: number): Promise<void> => {
+  try {
+    const response = await fetch(`${API_URL}/metrics/${metricId}/target`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ target }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to set metric target');
+    }
+  } catch (error) {
+    console.error('Error setting metric target:', error);
     throw error;
   }
 };

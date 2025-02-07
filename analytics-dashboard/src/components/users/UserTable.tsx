@@ -11,14 +11,14 @@ export interface UserStats {
 }
 
 interface UserTableProps {
-  gaugeType?: 'thread_users' | 'sketch_users' | 'render_users' | 'medium_chat_users' | 'active_chat_users';
+  gaugeType?: 'active_users' | 'power_users' | 'moderate_users' | 'producers' | 'producers_attempting';
   timeRange?: {
     start: Date;
     end: Date;
   };
 }
 
-const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeRange }) => {
+const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'active_users', timeRange }) => {
   const [users, setUsers] = useState<UserStats[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
@@ -39,7 +39,6 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeR
         setUsers(data);
       } catch (err) {
         setError('Error fetching user statistics');
-        console.error('Error fetching users:', err);
       } finally {
         setLoading(false);
       }
@@ -79,16 +78,16 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'thread_users', timeR
 
   const getTableTitle = () => {
     switch (gaugeType) {
-      case 'thread_users':
-        return 'Thread Users';
-      case 'sketch_users':
-        return 'Sketch Users';
-      case 'render_users':
-        return 'Render Users';
-      case 'medium_chat_users':
-        return 'Medium Chat Users';
-      case 'active_chat_users':
+      case 'active_users':
+        return 'Active Users';
+      case 'power_users':
         return 'Power Users';
+      case 'moderate_users':
+        return 'Moderate Users';
+      case 'producers':
+        return 'Producers';
+      case 'producers_attempting':
+        return 'Producers Attempting';
       default:
         return 'Users';
     }

@@ -11,7 +11,8 @@ const MetricCard: React.FC<MetricCardProps> = ({ metric, onClick }) => {
   const { name, description, data } = metric;
   const showV1Data = metric.id === 'descope_users' || metric.id === 'thread_users';
 
-  const formatNumber = (num: number) => {
+  const formatNumber = (num: number | undefined) => {
+    if (!num && num !== 0) return '0';
     if (num >= 1000000) {
       return `${(num / 1000000).toFixed(1)}M`;
     }
@@ -32,10 +33,15 @@ const MetricCard: React.FC<MetricCardProps> = ({ metric, onClick }) => {
   };
 
   const getTotalValue = () => {
+    const baseValue = data.value || 0;
     if (!showV1Data || !data.v1Value) {
-      return data.value;
+      return baseValue;
     }
-    return data.value + data.v1Value;
+    return baseValue + data.v1Value;
+  };
+
+  const getValue = () => {
+    return data.value !== undefined ? data.value : null;
   };
 
   return (
@@ -56,8 +62,8 @@ const MetricCard: React.FC<MetricCardProps> = ({ metric, onClick }) => {
         
         <div className="mt-4">
           <div className="flex flex-col">
-            <div className="text-3xl font-bold text-gray-900">
-              {formatNumber(data.value)}
+            <div className="text-4xl font-bold text-gray-900">
+              {formatNumber(getValue())}
             </div>
             {showV1Data && data.v1Value !== undefined && data.v1Value > 0 && (
               <div className="mt-2 flex flex-col">

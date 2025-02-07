@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple, Optional
 from opensearchpy import AsyncOpenSearch, NotFoundError, RequestError
 
-from src.services.analytics.queries import QueryBuilder
-from src.services.analytics.descope import DescopeService
-from src.services.analytics.historical import HistoricalDataService
+from src.utils.query_builder import OpenSearchQueryBuilder
+from src.services.descope_service import DescopeService
+from src.services.historical_data_service import HistoricalDataService
 from src.services.analytics.metrics.utils import (
     ensure_timezone,
     calculate_delta,
@@ -19,19 +19,22 @@ from src.services.analytics.metrics.utils import (
 
 logger = logging.getLogger(__name__)
 
-class BaseMetrics:
+class BaseMetricsService:
     """Base class for all metrics calculations"""
 
     def __init__(self, 
                  opensearch_client: AsyncOpenSearch, 
-                 query_builder: QueryBuilder, 
+                 query_builder: OpenSearchQueryBuilder, 
                  index: str,
+                 timestamp_field: str,
+                 request_timeout: int,
                  descope_service: DescopeService):
         self.opensearch = opensearch_client
         self.query_builder = query_builder
         self.index = index
+        self.timestamp_field = timestamp_field
+        self.request_timeout = request_timeout
         self.descope = descope_service
-        self.request_timeout = 30
         self.history = HistoricalDataService()
         self.min_date = datetime(2024, 10, 1, tzinfo=timezone.utc)
         self.descope_start_date = datetime(2025, 1, 27, tzinfo=timezone.utc)
@@ -39,12 +42,9 @@ class BaseMetrics:
     async def _execute_opensearch_query(self, query: Dict[str, Any], error_message: str) -> Dict[str, Any]:
         """Execute OpenSearch query with error handling"""
         try:
-            result = await self.opensearch.search(
-                index=self.index,
-                body=query,
-                size=0,
-                request_timeout=self.request_timeout
-            )
+            logger.debug(f"Executing OpenSearch query: {query}")
+            result = await self.opensearch.search(query=query, size=0)
+            logger.debug(f"OpenSearch query result: {result}")
             return result
         except NotFoundError:
             logger.error(f"{error_message}: Index not found", exc_info=True)
@@ -56,13 +56,17 @@ class BaseMetrics:
             logger.error(f"{error_message}: {str(e)}", exc_info=True)
             return self._get_empty_result()
 
-    def _get_date_range_query(self, start_date: datetime, end_date: datetime, event_name: str) -> Dict[str, Any]:
+    def _get_date_range_query(self, start_date: datetime, end_date: datetime, event_name: Optional[str] = None) -> Dict[str, Any]:
         """Build date range query for OpenSearch"""
+        must_conditions = [self.query_builder.build_date_range_query(
+            self._format_date_os(start_date),
+            self._format_date_os(end_date)
+        )]
+        if event_name:
+            must_conditions.append({"term": {"event_name.keyword": event_name}})
+
         return self.query_builder.build_composite_query(
-            must_conditions=[
-                {"term": {"event_name.keyword": event_name}},
-                self.query_builder.build_date_range_filter(start_date, end_date)
-            ],
+            must_conditions=must_conditions,
             aggregations={
                 "aggs": {
                     "unique_users": {"cardinality": {"field": "trace_id.keyword"}}
@@ -97,10 +101,10 @@ class BaseMetrics:
             logger.error(f"Error getting user details: {str(e)}", exc_info=True)
             return users  # Return original users without details rather than empty list
 
-    def _calculate_daily_average(self, value: int, start_date: datetime, end_date: datetime) -> float:
+    def calculate_daily_average(self, total: float, start_date: datetime, end_date: datetime) -> float:
         """Calculate daily average for a metric"""
         days_in_range = (end_date - start_date).days + 1
-        return value / days_in_range if days_in_range > 0 else 0
+        return total / days_in_range if days_in_range > 0 else 0
 
     def _validate_dates(self, start_date: datetime, end_date: datetime) -> Tuple[datetime, datetime]:
         """Validate and adjust date range"""
@@ -146,11 +150,15 @@ class BaseMetrics:
 
     def _build_thread_count_aggregation(self, min_count: Optional[int] = None, max_count: Optional[int] = None) -> Dict[str, Any]:
         """Build thread count aggregation for OpenSearch queries"""
+        logger.info(f"Building thread count aggregation with min_count={min_count}, max_count={max_count}")
         aggs = {
             "thread_count": {
                 "terms": {
                     "field": "trace_id.keyword",
                     "size": 10000
+                },
+                "aggs": {
+                    "thread_count": {"value_count": {"field": "thread_id.keyword"}}
                 }
             }
         }
@@ -158,17 +166,64 @@ class BaseMetrics:
         if min_count is not None or max_count is not None:
             script_parts = []
             if min_count is not None:
-                script_parts.append(f"params.count >= {min_count}")
+                script_parts.append(f"params.thread_count >= {min_count}")
             if max_count is not None:
-                script_parts.append(f"params.count <= {max_count}")
+                script_parts.append(f"params.thread_count <= {max_count}")
 
-            aggs["thread_count"]["aggs"] = {
-                "thread_filter": {
-                    "bucket_selector": {
-                        "buckets_path": {"count": "_count"},
-                        "script": " && ".join(script_parts)
-                    }
+            aggs["thread_count"]["aggs"]["thread_filter"] = {
+                "bucket_selector": {
+                    "buckets_path": {"thread_count": "thread_count"},
+                    "script": " && ".join(script_parts)
                 }
             }
 
+        logger.debug(f"Thread count aggregation: {aggs}")
         return {"aggs": aggs}
+
+    def get_date_range(self, start_date: datetime, end_date: datetime) -> Dict[str, str]:
+        """Get the date range for the metrics"""
+        return {
+            "start": format_date_iso(start_date),
+            "end": format_date_iso(end_date)
+        }
+
+    def create_metric(self, value: float, previous_value: float, start_date: datetime, end_date: datetime, category: str) -> Dict[str, Any]:
+        """Create a metric object with calculated daily average"""
+        daily_average = self.calculate_daily_average(value, start_date, end_date)
+        return create_metric_object(value, previous_value, daily_average, category, value)
+
+    async def _execute_query(self, query: Dict[str, Any], metric_name: str, start_date: datetime, end_date: datetime, category: str) -> Dict[str, Any]:
+        try:
+            logger.info(f"Executing query for {metric_name}")
+            logger.debug(f"Query: {query}")
+            result = await self._execute_opensearch_query(query, f"Error getting {metric_name}")
+            logger.debug(f"Raw result for {metric_name}: {result}")
+            count = 0
+        
+            # Extract count from aggregations
+            if "aggregations" in result:
+                aggs = result["aggregations"]
+                logger.debug(f"Aggregations for {metric_name}: {aggs}")
+                if "unique_users" in aggs:
+                    count = aggs["unique_users"]["value"]
+                    logger.debug(f"{metric_name} unique users count: {count}")
+                elif "users" in aggs and "buckets" in aggs["users"]:
+                    count = len(aggs["users"]["buckets"])
+                    logger.debug(f"{metric_name} users bucket count: {count}")
+                elif "thread_count" in aggs and "buckets" in aggs["thread_count"]:
+                    count = len([b for b in aggs["thread_count"]["buckets"] 
+                            if "thread_filter" not in b or b["thread_count"]["value"] > 0])
+                    logger.debug(f"{metric_name} thread count: {count}")
+                    logger.debug(f"Thread count buckets: {aggs['thread_count']['buckets']}")
+                else:
+                    logger.warning(f"Unexpected aggregation structure for {metric_name}: {aggs}")
+            else:
+                logger.warning(f"No aggregations found in result for {metric_name}")
+
+            logger.info(f"{metric_name} count: {count}")
+            metric = self.create_metric(count, 0, start_date, end_date, category)
+            logger.debug(f"Created metric for {metric_name}: {metric}")
+            return metric
+        except Exception as e:
+            logger.error(f"Error getting {metric_name}: {str(e)}", exc_info=True)
+            return self.create_metric(0, 0, start_date, end_date, category)

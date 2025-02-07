@@ -1,17 +1,17 @@
 """OpenSearch query builder utility"""
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Union
 from datetime import datetime
 from dateutil.parser import parse
 
 
 class OpenSearchQueryBuilder:
-    def build_date_range_query(self, start_time: str, end_time: str) -> Dict:
+    def build_date_range_query(self, start_time: Union[int, str], end_time: Union[int, str]) -> Dict:
         """
         Build a date range query for OpenSearch.
 
         Args:
-            start_time: ISO format timestamp
-            end_time: ISO format timestamp
+            start_time: Timestamp in milliseconds since epoch or ISO format string
+            end_time: Timestamp in milliseconds since epoch or ISO format string
 
         Returns:
             Dict containing the date range query

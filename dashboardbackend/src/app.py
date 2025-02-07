@@ -3,10 +3,21 @@ Main application factory
 """
 import logging
 import os
-from quart import Quart
+from quart import Quart, request
 from quart_cors import cors
 from dotenv import load_dotenv
 from src.core import init_services
+from datetime import datetime
+from dateutil import parser
+import pytz
+
+def configure_logging():
+    """Configure logging for the application"""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +28,9 @@ def create_app() -> Quart:
         
         # Load environment variables
         load_dotenv()
+        
+        # Configure logging
+        configure_logging()
         
         # Create Quart app
         app = Quart(__name__)

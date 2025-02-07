@@ -5,22 +5,26 @@ import UserTable from '../users/UserTable';
 import { fetchMetrics } from '../../services/metricService';
 import { Metric } from '../../types/metrics';
 
+type GaugeType = 'thread_users' | 'sketch_users' | 'render_users' | 'medium_chat_users' | 'active_chat_users';
+
 const Dashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<Metric[]>([]);
-  const [startDate, setStartDate] = useState<Date>(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const [startDate, setStartDate] = useState<Date>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1); // First day of current month
+  });
   const [endDate, setEndDate] = useState<Date>(new Date());
-  const [includeV1, setIncludeV1] = useState<boolean>(true);
-  const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
+  const [selectedMetric, setSelectedMetric] = useState<GaugeType | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     loadMetrics();
-  }, [startDate, endDate, includeV1]);
+  }, [startDate, endDate]);
 
   const loadMetrics = async () => {
     try {
       setLoading(true);
-      const response = await fetchMetrics(startDate, endDate, includeV1);
+      const response = await fetchMetrics(startDate, endDate);
       setMetrics(response.metrics);
     } catch (error) {
       console.error('Error loading metrics:', error);
@@ -30,7 +34,7 @@ const Dashboard: React.FC = () => {
   };
 
   const handleMetricClick = (metricId: string) => {
-    setSelectedMetric(metricId);
+    setSelectedMetric(metricId as GaugeType);
   };
 
   const handleDateChange = (start: Date, end: Date) => {
@@ -40,23 +44,16 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col space-y-4 mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Analytics Dashboard</h1>
-        <div className="flex items-center space-x-4">
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={includeV1}
-              onChange={(e) => setIncludeV1(e.target.checked)}
-              className="form-checkbox h-4 w-4 text-blue-600"
+        <div className="flex flex-wrap gap-4 items-center">
+          <div className="flex-grow">
+            <DateRangeSelector
+              startDate={startDate}
+              endDate={endDate}
+              onDateChange={handleDateChange}
             />
-            <span className="text-sm text-gray-700">Include V1</span>
-          </label>
-          <DateRangeSelector
-            startDate={startDate}
-            endDate={endDate}
-            onDateChange={handleDateChange}
-          />
+          </div>
         </div>
       </div>
 
@@ -69,7 +66,7 @@ const Dashboard: React.FC = () => {
           <MetricGrid metrics={metrics} onMetricClick={handleMetricClick} />
           {selectedMetric && (
             <UserTable 
-              gaugeType={selectedMetric as any}
+              gaugeType={selectedMetric}
               timeRange={{
                 start: startDate,
                 end: endDate

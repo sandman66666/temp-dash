@@ -5,10 +5,11 @@ from datetime import datetime, timezone
 from typing import Optional
 from quart import Blueprint, jsonify, request, current_app
 from src.services.analytics_service import AnalyticsService
-from src.core import redis_client, opensearch_client
+import json
+from pathlib import Path
+from werkzeug.exceptions import HTTPException
 
 metrics_bp = Blueprint('metrics', __name__)
-analytics_service = AnalyticsService(opensearch_client, redis_client)
 
 def init_app(app):
     """Initialize metrics blueprint"""
@@ -16,40 +17,43 @@ def init_app(app):
 
 @metrics_bp.route('/', methods=['GET'])
 async def get_metrics():
-    """Get dashboard metrics"""
+    """Get metrics for the dashboard"""
     try:
-        # Parse date parameters
-        start_date = request.args.get('startDate')
-        end_date = request.args.get('endDate')
-        include_v1 = request.args.get('includeV1', 'true').lower() == 'true'
+        # Get query parameters with defaults
+        start_date_str = request.args.get('startDate')
+        end_date_str = request.args.get('endDate')
+        include_v1 = request.args.get('includeV1', 'false').lower() == 'true'
 
-        current_app.logger.info(f"Fetching metrics with params: start={start_date}, end={end_date}, include_v1={include_v1}")
+        # If no dates provided, default to current month
+        if not start_date_str or not end_date_str:
+            now = datetime.now(timezone.utc)
+            start_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+            end_date = now
+            current_app.logger.info(f"Using default date range: {start_date} to {end_date}")
+        else:
+            # Parse dates from query parameters
+            try:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            except ValueError:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
-        if not start_date or not end_date:
-            current_app.logger.error("Missing date parameters")
-            return jsonify({
-                'error': 'Missing date parameters'
-            }), 400
+            try:
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            except ValueError:
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
-        try:
-            # Convert to datetime objects
-            start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-        except ValueError as e:
-            current_app.logger.error(f"Invalid date format: {str(e)}")
-            return jsonify({
-                'error': 'Invalid date format'
-            }), 400
+        # Get metrics from analytics service
+        metrics = await current_app.analytics_service.get_dashboard_metrics(start_date, end_date, include_v1)
 
-        # Get metrics with V1 data
-        metrics_data = await analytics_service.get_dashboard_metrics(
-            start_date=start_date,
-            end_date=end_date,
-            include_v1=include_v1
-        )
-
-        current_app.logger.info(f"Successfully fetched metrics: {metrics_data}")
-        return jsonify(metrics_data)
+        # Add time range to response
+        response = {
+            "metrics": metrics,
+            "timeRange": {
+                "start": start_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end": end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            }
+        }
+        return jsonify(response)
 
     except Exception as e:
         current_app.logger.error(f"Error in get_metrics: {str(e)}", exc_info=True)
@@ -85,7 +89,7 @@ async def get_user_stats():
             }), 400
 
         # Get user statistics
-        user_stats = await analytics_service.get_user_statistics(
+        user_stats = await current_app.analytics_service.get_user_statistics(
             start_date=start_date,
             end_date=end_date,
             gauge_type=gauge_type
@@ -137,7 +141,7 @@ async def get_user_events():
                 end_date = end_date.replace(tzinfo=timezone.utc)
 
             # Get user events
-            events = await analytics_service.get_user_events(
+            events = await current_app.analytics_service.get_user_events(
                 trace_id=trace_id,
                 start_date=start_date,
                 end_date=end_date
@@ -165,3 +169,27 @@ async def get_user_events():
             'status': 'error',
             'error': str(e)
         }), 500
+
+@metrics_bp.route('/metrics/<metric_id>/target', methods=['POST'])
+async def set_metric_target(metric_id: str):
+    try:
+        # Load current targets
+        target_file = Path(__file__).parent.parent / "data" / "metric_targets.json"
+        if target_file.exists():
+            with open(target_file, "r") as f:
+                targets = json.load(f)
+        else:
+            targets = {}
+        
+        # Update target
+        target = await request.get_json()
+        targets[metric_id] = target['target']
+        
+        # Save targets
+        with open(target_file, "w") as f:
+            json.dump(targets, f, indent=2)
+        
+        return {"success": True}
+    except Exception as e:
+        current_app.logger.error(f"Error setting metric target: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

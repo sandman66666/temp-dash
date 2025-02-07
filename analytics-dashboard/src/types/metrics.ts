@@ -1,18 +1,22 @@
-export interface MetricValue {
+export interface MetricData {
   value: number;
   previousValue?: number;
   trend?: 'up' | 'down' | 'neutral';
   changePercentage?: number;
-  v1Value?: number;
+  target?: number;
+  historical?: Array<{
+    date: string;
+    value: number;
+  }>;
 }
 
 export interface Metric {
   id: string;
   name: string;
   description: string;
-  category: 'user' | 'engagement' | 'performance';
-  interval: 'daily' | 'weekly' | 'monthly';
-  data: MetricValue;
+  category: string;
+  interval: string;
+  data: MetricData;
 }
 
 export interface MetricResponse {

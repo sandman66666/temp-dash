@@ -9,6 +9,9 @@ from hypercorn.asyncio import serve
 from dotenv import load_dotenv
 from src.app import init_app
 
+import logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

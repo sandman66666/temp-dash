@@ -1,21 +1,17 @@
 """
 Entry point for metrics analytics
 """
-from .base_metrics import (
+from .base import (
     ensure_timezone,
     calculate_delta,
     create_metric_object,
     get_empty_metric,
     format_date_iso,
-    BaseMetrics
+    BaseMetricsService
 )
-from .activity_metrics import ActivityMetrics
-from .user_metrics import UserMetrics
 
 __all__ = [
-    'BaseMetrics',
-    'ActivityMetrics',
-    'UserMetrics',
+    'BaseMetricsService',
     'ensure_timezone',
     'calculate_delta',
     'create_metric_object',
