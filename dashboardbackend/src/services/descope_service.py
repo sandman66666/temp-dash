@@ -368,3 +368,47 @@ class DescopeService:
         except Exception as e:
             logger.error(f"Error getting user details: {e}", exc_info=True)
             return {}
+
+    async def search_users(self, query: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Search for users using the Descope search API.
+        
+        Args:
+            query: Search query parameters
+            
+        Returns:
+            List[Dict[str, Any]]: List of matching users
+        """
+        try:
+            if not self.bearer_token:
+                logger.warning("Missing Descope bearer token")
+                return []
+
+            headers = {
+                'Authorization': f'Bearer {self.bearer_token}',
+                'Content-Type': 'application/json'
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/mgmt/user/search",
+                    headers=headers,
+                    json=query,
+                    ssl=self.ssl_context,
+                    timeout=30
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        users = data.get('users', [])
+                        logger.info(f"Found {len(users)} users in Descope search")
+                        return users
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Failed to search users. Status: {response.status}, Error: {error_text}")
+                        return []
+
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error searching users: {e}", exc_info=True)
+            return []
+        except Exception as e:
+            logger.error(f"Error searching users: {e}", exc_info=True)
+            return []

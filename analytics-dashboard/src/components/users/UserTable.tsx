@@ -1,17 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchUserStats } from '../../services/metricService';
 import UserEventsModal from '../modal/UserEventsModal';
-
-export interface UserStats {
-  trace_id: string;
-  email: string;
-  name?: string;
-  messageCount?: number;
-  sketchCount?: number;
-  renderCount?: number;
-  createdTime?: string;
-  loginCount?: number;
-}
+import { UserStats } from '../../types/metrics';
 
 interface UserTableProps {
   gaugeType: string;
@@ -29,7 +19,7 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'active_users', timeR
   const [sortConfig, setSortConfig] = useState<{
     key: keyof UserStats;
     direction: 'ascending' | 'descending';
-  }>({ key: gaugeType === 'total_users_count' || gaugeType === 'new_users' ? 'createdTime' : 'messageCount', direction: 'descending' });
+  }>({ key: 'messageCount', direction: 'descending' });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -72,8 +62,8 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'active_users', timeR
     return sortConfig.direction === 'ascending' ? comparison : -comparison;
   });
 
-  const handleUserClick = (traceId: string) => {
-    setSelectedUser(traceId);
+  const handleUserClick = (userId: string) => {
+    setSelectedUser(userId);
   };
 
   const handleCloseModal = () => {
@@ -107,7 +97,9 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'active_users', timeR
   return (
     <div className="mt-8">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">User Details</h2>
+        <h2 className="text-lg font-semibold text-gray-900">
+          User Details ({users.length} users)
+        </h2>
       </div>
       <div className="shadow overflow-x-auto border-b border-gray-200 sm:rounded-lg">
         <table className="min-w-full divide-y divide-gray-200">
@@ -120,106 +112,67 @@ const UserTable: React.FC<UserTableProps> = ({ gaugeType = 'active_users', timeR
               >
                 Email
               </th>
-              {(gaugeType === 'total_users_count' || gaugeType === 'new_users') ? (
-                <>
-                  <th 
-                    scope="col" 
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('createdTime')}
-                  >
-                    Created
-                  </th>
-                  <th 
-                    scope="col" 
-                    className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('loginCount')}
-                  >
-                    Logins
-                  </th>
-                </>
-              ) : (
-                <>
-                  <th 
-                    scope="col" 
-                    className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('messageCount')}
-                  >
-                    Messages
-                  </th>
-                  <th 
-                    scope="col" 
-                    className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('sketchCount')}
-                  >
-                    Sketches
-                  </th>
-                  <th 
-                    scope="col" 
-                    className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort('renderCount')}
-                  >
-                    Renders
-                  </th>
-                </>
-              )}
+              <th 
+                scope="col" 
+                className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('messageCount')}
+              >
+                Messages
+              </th>
+              <th 
+                scope="col" 
+                className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('sketchCount')}
+              >
+                Sketches
+              </th>
+              <th 
+                scope="col" 
+                className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                onClick={() => handleSort('renderCount')}
+              >
+                Renders
+              </th>
               <th 
                 scope="col" 
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
               >
-                Trace ID
+                User ID
               </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {sortedUsers.map((user, index) => (
+            {sortedUsers.map((user) => (
               <tr 
-                key={user.trace_id || index}
-                className="hover:bg-gray-50 transition-colors duration-150 ease-in-out cursor-pointer"
-                onClick={() => handleUserClick(user.trace_id)}
+                key={user.id}
+                onClick={() => handleUserClick(user.id)}
+                className="hover:bg-gray-50 cursor-pointer"
               >
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-blue-600 hover:text-blue-800">
-                    {user.email}
-                  </div>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {user.email}
                 </td>
-                {(gaugeType === 'total_users_count' || gaugeType === 'new_users') ? (
-                  <>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {user.createdTime ? new Date(parseInt(user.createdTime)).toLocaleString() : 'N/A'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 text-right">{user.loginCount || 0}</div>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 text-right">{user.messageCount || 0}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 text-right">{user.sketchCount || 0}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 text-right">{user.renderCount || 0}</div>
-                    </td>
-                  </>
-                )}
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">{user.trace_id}</div>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
+                  {user.messageCount}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
+                  {user.sketchCount}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
+                  {user.renderCount}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {user.id}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-
       {selectedUser && (
         <UserEventsModal
-          traceId={selectedUser}
-          onClose={handleCloseModal}
+          userId={selectedUser}
           timeRange={timeRange}
+          onClose={handleCloseModal}
         />
       )}
     </div>

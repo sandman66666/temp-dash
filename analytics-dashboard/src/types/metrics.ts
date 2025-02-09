@@ -1,8 +1,9 @@
 export interface MetricData {
-  value: number;
+  value?: number;
   previousValue?: number;
-  trend?: 'up' | 'down' | 'neutral';
+  trend: 'up' | 'down' | 'neutral';
   changePercentage?: number;
+  v1Value?: number;
   target?: number;
   historical?: Array<{
     date: string;
@@ -10,13 +11,34 @@ export interface MetricData {
   }>;
 }
 
+export interface UserDetail {
+  id: string;
+  email: string;
+  name: string;
+  createdTime: string;
+  loginCount: number;
+  eventCount: number;
+}
+
+export interface UserStats {
+  id: string;
+  email: string;
+  name: string;
+  createdTime: string;
+  loginCount: number;
+  messageCount: number;
+  sketchCount: number;
+  renderCount: number;
+}
+
 export interface Metric {
   id: string;
   name: string;
   description: string;
-  category: string;
+  category: 'realtime' | 'historical';
   interval: string;
   data: MetricData;
+  users?: UserStats[];
 }
 
 export interface MetricResponse {
@@ -25,14 +47,6 @@ export interface MetricResponse {
     start: Date;
     end: Date;
   };
-}
-
-export interface UserStats {
-  email: string;
-  trace_id: string;
-  messageCount: number;
-  sketchCount: number;
-  renderCount: number;
 }
 
 export interface UserEvent {

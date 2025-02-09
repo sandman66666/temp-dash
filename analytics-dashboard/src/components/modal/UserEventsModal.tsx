@@ -3,6 +3,10 @@ import { fetchUserEvents, UserEvent, UserEventsResponse } from '../../services/m
 
 interface UserEventsModalProps {
   userId: string;
+  timeRange: {
+    start: Date;
+    end: Date;
+  };
   onClose: () => void;
 }
 
@@ -10,7 +14,7 @@ interface GroupedEvents {
   [flowId: string]: UserEvent[];
 }
 
-const UserEventsModal: React.FC<UserEventsModalProps> = ({ userId, onClose }) => {
+const UserEventsModal: React.FC<UserEventsModalProps> = ({ userId, timeRange, onClose }) => {
   const [events, setEvents] = useState<UserEvent[]>([]);
   const [groupedEvents, setGroupedEvents] = useState<GroupedEvents>({});
   const [loading, setLoading] = useState<boolean>(true);
@@ -19,11 +23,11 @@ const UserEventsModal: React.FC<UserEventsModalProps> = ({ userId, onClose }) =>
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const loadUserEvents = async () => {
+    const fetchEvents = async () => {
       try {
         setLoading(true);
         setError('');
-        const response: UserEventsResponse = await fetchUserEvents(userId);
+        const response: UserEventsResponse = await fetchUserEvents(userId, timeRange.start, timeRange.end);
         if (response.status === 'success' && Array.isArray(response.data)) {
           setEvents(response.data);
           groupEventsByFlow(response.data);
@@ -38,8 +42,8 @@ const UserEventsModal: React.FC<UserEventsModalProps> = ({ userId, onClose }) =>
       }
     };
 
-    loadUserEvents();
-  }, [userId]);
+    fetchEvents();
+  }, [userId, timeRange]);
 
   const groupEventsByFlow = (events: UserEvent[]) => {
     const grouped = events.reduce((acc: GroupedEvents, event) => {

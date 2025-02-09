@@ -49,7 +49,11 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       const response = await fetchMetrics(startDate, endDate);
-      const filtered = response.metrics.filter((metric: Metric) => metric.category !== 'historical');
+      const filtered = response.metrics.filter((metric: Metric) => metric.category !== 'historical')
+        .map((metric: Metric) => ({
+          ...metric,
+          userCount: metric.users?.length || 0
+        }));
       setDateFilteredMetrics(filtered);
     } catch (error) {
       console.error('Error loading date-filtered metrics:', error);
@@ -85,11 +89,17 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      <MetricGrid 
-        metrics={allMetrics} 
-        onMetricClick={handleMetricClick} 
-        isLoading={loading}
-      />
+      {loading && allMetrics.length === 0 ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-500 border-t-transparent"></div>
+        </div>
+      ) : (
+        <MetricGrid 
+          metrics={allMetrics} 
+          onMetricClick={handleMetricClick} 
+          isLoading={loading}
+        />
+      )}
       
       {selectedMetric && (
         <UserTable 

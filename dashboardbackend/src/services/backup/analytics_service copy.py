@@ -46,38 +46,69 @@ class AnalyticsService:
                     return cached_data
 
             # Get current period metrics from OpenSearch
-            message_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "handleMessageInThread_start")
+            message_counts = await self.opensearch_service.get_user_counts(
+                start_date, 
+                end_date, 
+                "handleMessageInThread_start"
+            )
             
-            # Get render counts using the correct event name
-            render_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "renderStart_end")
-            logger.info(f"Render counts: {len(render_counts)}")
+            # Get render counts using both possible event names
+            render_counts_start = await self.opensearch_service.get_user_counts(
+                start_date, 
+                end_date, 
+                "renderStart_end"
+            )
+            render_counts_complete = await self.opensearch_service.get_user_counts(
+                start_date, 
+                end_date, 
+                "renderComplete"
+            )
             
-            sketch_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "uploadSketch_end")
+            # Merge render counts
+            render_counts = {}
+            for user_id, count in render_counts_start.items():
+                render_counts[user_id] = count
+            for user_id, count in render_counts_complete.items():
+                render_counts[user_id] = render_counts.get(user_id, 0) + count
+            
+            sketch_counts = await self.opensearch_service.get_user_counts(
+                start_date, 
+                end_date, 
+                "uploadSketch_end"
+            )
 
             # Log counts for debugging
-            logger.info(f"Message counts: {len(message_counts)}")
-            logger.info(f"Render counts: {len(render_counts)}")
-            logger.info(f"Sketch counts: {len(sketch_counts)}")
+            logger.info(f"Message counts: {len(message_counts)} users, {sum(message_counts.values())} total messages")
+            logger.info(f"Render counts: {len(render_counts)} users, {sum(render_counts.values())} total renders")
+            logger.info(f"Sketch counts: {len(sketch_counts)} users, {sum(sketch_counts.values())} total sketches")
 
-            # Calculate user segments
-            active_users = len([u for u in message_counts.values() if u > 0])
-            power_users = len([u for u in message_counts.values() if u > 20])
-            moderate_users = len([u for u in message_counts.values() if 5 <= u <= 20])
-            producers = len([u for u in render_counts.values() if u > 0])
+            # Calculate user segments with proper thresholds
+            active_users = len([u for u in message_counts.values() if u >= 1])  # At least 1 message
+            power_users = len([u for u in message_counts.values() if u >= 20])  # 20 or more messages
+            moderate_users = len([u for u in message_counts.values() if 5 <= u < 20])  # Between 5 and 19 messages
+            producers = len([u for u in sketch_counts.values() if u >= 1])  # At least 1 sketch
+            producers_attempting = len([u for u in render_counts.values() if u >= 1])  # At least 1 render attempt
             productions = sum(render_counts.values())  # Total number of renders
 
-            logger.info(f"Active users: {active_users}")
-            logger.info(f"Producers: {producers}")
-            logger.info(f"Productions: {productions}")
+            # Log user segments for debugging
+            logger.info(f"Active users (≥1 message): {active_users}")
+            logger.info(f"Power users (≥20 messages): {power_users}")
+            logger.info(f"Moderate users (5-19 messages): {moderate_users}")
+            logger.info(f"Producers (≥1 sketch): {producers}")
+            logger.info(f"Producers attempting (≥1 render): {producers_attempting}")
+            logger.info(f"Total productions: {productions}")
 
             # Get total users from Descope for the period
-            logger.info(f"Getting total users at {end_date}")
-            total_users = await self.descope_service.get_total_users(end_date)  # Filter by end_date
-            logger.info(f"Total users at end date: {total_users}")
-            
-            # Calculate new users based on users created in the period
+            total_users = await self.descope_service.get_total_users(end_date)
+            if total_users == 0:
+                logger.warning("Got zero total users from Descope, this might indicate an issue")
+                
+            # Get new users in period
             new_users = await self.descope_service.get_new_users_in_period(start_date, end_date)
-            logger.info(f"Total users: {total_users}")
+            if new_users == 0:
+                logger.warning("Got zero new users in period from Descope, this might indicate an issue")
+
+            logger.info(f"Total users at end date: {total_users}")
             logger.info(f"New users in period: {new_users}")
 
             # Calculate previous period dates
@@ -85,17 +116,57 @@ class AnalyticsService:
             prev_end_date = start_date
             prev_start_date = prev_end_date - timedelta(days=days_diff)
 
-            # Get previous period metrics from OpenSearch
-            prev_message_counts = await self.opensearch_service.get_user_counts(prev_start_date, prev_end_date, "handleMessageInThread_start")
-            prev_render_counts = await self.opensearch_service.get_user_counts(prev_start_date, prev_end_date, "renderStart_end")
-            logger.info(f"Previous render counts: {len(prev_render_counts)}")
+            # Get previous period metrics
+            prev_message_counts = await self.opensearch_service.get_user_counts(
+                prev_start_date, 
+                prev_end_date, 
+                "handleMessageInThread_start"
+            )
+            
+            prev_render_counts_start = await self.opensearch_service.get_user_counts(
+                prev_start_date, 
+                prev_end_date, 
+                "renderStart_end"
+            )
+            prev_render_counts_complete = await self.opensearch_service.get_user_counts(
+                prev_start_date, 
+                prev_end_date, 
+                "renderComplete"
+            )
+            
+            # Merge previous period render counts
+            prev_render_counts = {}
+            for user_id, count in prev_render_counts_start.items():
+                prev_render_counts[user_id] = count
+            for user_id, count in prev_render_counts_complete.items():
+                prev_render_counts[user_id] = prev_render_counts.get(user_id, 0) + count
+                
+            prev_sketch_counts = await self.opensearch_service.get_user_counts(
+                prev_start_date, 
+                prev_end_date, 
+                "uploadSketch_end"
+            )
 
-            # Calculate previous period metrics
-            active_users_prev = len([u for u in prev_message_counts.values() if u > 0])
-            power_users_prev = len([u for u in prev_message_counts.values() if u > 20])
-            moderate_users_prev = len([u for u in prev_message_counts.values() if 5 <= u <= 20])
-            producers_prev = len([u for u in prev_render_counts.values() if u > 0])
-            productions_prev = sum(prev_render_counts.values())
+            # Log previous period counts for debugging
+            logger.info(f"Previous message counts: {len(prev_message_counts)} users, {sum(prev_message_counts.values())} total messages")
+            logger.info(f"Previous render counts: {len(prev_render_counts)} users, {sum(prev_render_counts.values())} total renders")
+            logger.info(f"Previous sketch counts: {len(prev_sketch_counts)} users, {sum(prev_sketch_counts.values())} total sketches")
+
+            # Calculate previous period user segments
+            active_users_prev = len([u for u in prev_message_counts.values() if u >= 1])  # At least 1 message
+            power_users_prev = len([u for u in prev_message_counts.values() if u >= 20])  # 20 or more messages
+            moderate_users_prev = len([u for u in prev_message_counts.values() if 5 <= u < 20])  # Between 5 and 19 messages
+            producers_prev = len([u for u in prev_sketch_counts.values() if u >= 1])  # At least 1 sketch
+            producers_attempting_prev = len([u for u in prev_render_counts.values() if u >= 1])  # At least 1 render attempt
+            productions_prev = sum(prev_render_counts.values())  # Total number of renders
+
+            # Log previous period user segments for debugging
+            logger.info(f"Previous active users (≥1 message): {active_users_prev}")
+            logger.info(f"Previous power users (≥20 messages): {power_users_prev}")
+            logger.info(f"Previous moderate users (5-19 messages): {moderate_users_prev}")
+            logger.info(f"Previous producers (≥1 sketch): {producers_prev}")
+            logger.info(f"Previous producers attempting (≥1 render): {producers_attempting_prev}")
+            logger.info(f"Previous total productions: {productions_prev}")
 
             # Get all-time metrics for historical totals
             current_date = datetime.now(timezone.utc)
@@ -107,13 +178,22 @@ class AnalyticsService:
                 current_date,
                 "handleMessageInThread_start"
             )
-            all_time_active_users = len([u for u in all_time_message_counts.values() if u > 0])
+            all_time_active_users = len([u for u in all_time_message_counts.values() if u >= 1])  # At least 1 message
 
             # Get all-time productions and producers
             all_time_render_counts = await self.opensearch_service.get_user_counts(one_year_ago, current_date, "renderStart_end")
-            logger.info(f"All-time render counts: {len(all_time_render_counts)}")
-            all_time_producers = len([u for u in all_time_render_counts.values() if u > 0])
-            all_time_productions = sum(all_time_render_counts.values())
+            all_time_render_counts_complete = await self.opensearch_service.get_user_counts(one_year_ago, current_date, "renderComplete")
+            
+            # Merge all-time render counts
+            all_time_render_counts = {}
+            for user_id, count in all_time_render_counts.items():
+                all_time_render_counts[user_id] = count
+            for user_id, count in all_time_render_counts_complete.items():
+                all_time_render_counts[user_id] = all_time_render_counts.get(user_id, 0) + count
+            
+            logger.info(f"All-time render counts: {len(all_time_render_counts)} users, {sum(all_time_render_counts.values())} total renders")
+            all_time_producers = len([u for u in all_time_render_counts.values() if u >= 1])  # At least 1 render
+            all_time_productions = sum(all_time_render_counts.values())  # Total number of renders
 
             # Baseline numbers
             v1_total_users = 55000
@@ -192,22 +272,10 @@ class AnalyticsService:
                     }
                 },
                 {
-                    "id": "producers",
-                    "name": "Producers",
-                    "description": "Users who have completed at least one render",
-                    "category": "user",
-                    "interval": "daily",
-                    "data": {
-                        "value": producers,
-                        "previousValue": producers_prev,
-                        "trend": "neutral"
-                    }
-                },
-                {
                     "id": "power_users",
                     "name": "Power Users",
-                    "description": "Users with more than 20 message threads",
-                    "category": "engagement",
+                    "description": "Users who have started 20 or more message threads",
+                    "category": "user",
                     "interval": "daily",
                     "data": {
                         "value": power_users,
@@ -218,12 +286,36 @@ class AnalyticsService:
                 {
                     "id": "moderate_users",
                     "name": "Moderate Users",
-                    "description": "Users with 5-20 message threads",
-                    "category": "engagement",
+                    "description": "Users who have started 5-19 message threads",
+                    "category": "user",
                     "interval": "daily",
                     "data": {
                         "value": moderate_users,
                         "previousValue": moderate_users_prev,
+                        "trend": "neutral"
+                    }
+                },
+                {
+                    "id": "producers",
+                    "name": "Producers",
+                    "description": "Users who have uploaded at least one sketch",
+                    "category": "user",
+                    "interval": "daily",
+                    "data": {
+                        "value": producers,
+                        "previousValue": producers_prev,
+                        "trend": "neutral"
+                    }
+                },
+                {
+                    "id": "producers_attempting",
+                    "name": "Producers Attempting",
+                    "description": "Users who have started at least one render",
+                    "category": "user",
+                    "interval": "daily",
+                    "data": {
+                        "value": producers_attempting,
+                        "previousValue": producers_attempting_prev,
                         "trend": "neutral"
                     }
                 },
@@ -258,9 +350,18 @@ class AnalyticsService:
 
             # Get user counts for different event types
             message_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "handleMessageInThread_start")
-            render_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "renderStart_end")
-            sketch_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "uploadSketch_end")
+            render_counts_start = await self.opensearch_service.get_user_counts(start_date, end_date, "renderStart_end")
+            render_counts_complete = await self.opensearch_service.get_user_counts(start_date, end_date, "renderComplete")
             
+            # Merge render counts
+            render_counts = {}
+            for user_id, count in render_counts_start.items():
+                render_counts[user_id] = count
+            for user_id, count in render_counts_complete.items():
+                render_counts[user_id] = render_counts.get(user_id, 0) + count
+            
+            sketch_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "uploadSketch_end")
+
             # Filter users based on gauge type
             filtered_users = set()
             if gauge_type == 'power_users':
@@ -268,78 +369,53 @@ class AnalyticsService:
             elif gauge_type == 'moderate_users':
                 filtered_users = {user_id for user_id, count in message_counts.items() if 5 <= count < 20}
             elif gauge_type == 'producers':
+                filtered_users = {user_id for user_id, count in sketch_counts.items() if count > 0}
+            elif gauge_type == 'producers_attempting':
                 filtered_users = {user_id for user_id, count in render_counts.items() if count > 0}
-            elif gauge_type == 'active_users':
-                filtered_users = {user_id for user_id, count in message_counts.items() if count > 0}
             else:
-                filtered_users = set(message_counts.keys()) | set(render_counts.keys()) | set(sketch_counts.keys())
+                filtered_users = {user_id for user_id, count in message_counts.items() if count > 0}
 
-            # Log the number of filtered users
+            # Log the number of filtered users for debugging
             logger.info(f"Found {len(filtered_users)} users matching gauge type: {gauge_type}")
 
-            # Get user details from Descope using search instead of individual lookups
-            query = {
-                "searchFilter": {
-                    "filterFields": [{
-                        "attributeKey": "userId",
-                        "operator": "in",
-                        "values": list(filtered_users)
-                    }]
-                },
-                "page": 1,
-                "limit": len(filtered_users),
-                "options": {
-                    "withTestUsers": False
-                }
-            }
-
-            user_details = {}
-            try:
-                users = await self.descope_service.search_users(query)
-                for user in users:
-                    user_id = user.get('userId')
-                    if user_id:
-                        user_details[user_id] = {
-                            'email': user.get('email', ''),
-                            'name': user.get('name', ''),
-                            'loginIds': user.get('loginIds', []),
-                            'createdTime': user.get('createdTime', '')
-                        }
-            except Exception as e:
-                logger.error(f"Error fetching user details from Descope: {e}")
+            # Get user details for filtered users
+            user_details = await self.descope_service.get_user_details(list(filtered_users))
+            logger.info(f"Retrieved details for {len(user_details)} users")
 
             # Format user statistics
             user_stats = []
             for trace_id in filtered_users:
                 details = user_details.get(trace_id, {})
+                logger.debug(f"Processing user {trace_id} with details: {details}")
                 
                 # Get email from either email field or loginIds
                 email = details.get('email', '')
-                if not email and details.get('loginIds'):
+                if not email and 'loginIds' in details:
                     emails = [login for login in details['loginIds'] if '@' in login]
                     if emails:
                         email = emails[0]
-
+                
                 stats = {
                     'id': trace_id,
-                    'userId': trace_id,
+                    'userId': trace_id,  # Include both id and userId for compatibility
                     'email': email,
                     'name': details.get('name', ''),
                     'createdTime': details.get('createdTime', ''),
+                    'loginCount': details.get('loginCount', 0),
                     'messageCount': message_counts.get(trace_id, 0),
                     'sketchCount': sketch_counts.get(trace_id, 0),
                     'renderCount': render_counts.get(trace_id, 0)
                 }
                 user_stats.append(stats)
+                logger.debug(f"Added stats for user: {stats}")
 
             # Sort users by message count in descending order
             user_stats.sort(key=lambda x: x['messageCount'], reverse=True)
             
-            logger.info(f"Returning {len(user_stats)} user statistics records")
             return user_stats
 
         except Exception as e:
-            logger.error(f"Error getting user statistics: {str(e)}", exc_info=True)
+            logger.error(f"Error getting user statistics: {str(e)}")
             return []
 
     async def get_user_events(self, trace_id: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
