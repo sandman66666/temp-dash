@@ -5,10 +5,18 @@ import UserTable from '../users/UserTable';
 import { fetchMetrics } from '../../services/metricService';
 import { Metric } from '../../types/metrics';
 
-type GaugeType = 'thread_users' | 'sketch_users' | 'render_users' | 'medium_chat_users' | 'active_chat_users';
+type GaugeType = 
+  | 'active_users' 
+  | 'power_users' 
+  | 'moderate_users' 
+  | 'producers' 
+  | 'producers_attempting' 
+  | 'total_users_count' 
+  | 'new_users';
 
 const Dashboard: React.FC = () => {
-  const [metrics, setMetrics] = useState<Metric[]>([]);
+  const [historicalMetrics, setHistoricalMetrics] = useState<Metric[]>([]);
+  const [dateFilteredMetrics, setDateFilteredMetrics] = useState<Metric[]>([]);
   const [startDate, setStartDate] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1); // First day of current month
@@ -17,17 +25,34 @@ const Dashboard: React.FC = () => {
   const [selectedMetric, setSelectedMetric] = useState<GaugeType | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
+  // Load historical metrics once on component mount
   useEffect(() => {
-    loadMetrics();
+    loadHistoricalMetrics();
+  }, []);
+
+  // Load date-filtered metrics whenever date range changes
+  useEffect(() => {
+    loadDateFilteredMetrics();
   }, [startDate, endDate]);
 
-  const loadMetrics = async () => {
+  const loadHistoricalMetrics = async () => {
+    try {
+      const response = await fetchMetrics(new Date(0), new Date());
+      const historical = response.metrics.filter((metric: Metric) => metric.category === 'historical');
+      setHistoricalMetrics(historical);
+    } catch (error) {
+      console.error('Error loading historical metrics:', error);
+    }
+  };
+
+  const loadDateFilteredMetrics = async () => {
     try {
       setLoading(true);
       const response = await fetchMetrics(startDate, endDate);
-      setMetrics(response.metrics);
+      const filtered = response.metrics.filter((metric: Metric) => metric.category !== 'historical');
+      setDateFilteredMetrics(filtered);
     } catch (error) {
-      console.error('Error loading metrics:', error);
+      console.error('Error loading date-filtered metrics:', error);
     } finally {
       setLoading(false);
     }
@@ -41,6 +66,9 @@ const Dashboard: React.FC = () => {
     setStartDate(start);
     setEndDate(end);
   };
+
+  // Combine metrics for display, with historical metrics always at the top
+  const allMetrics = [...historicalMetrics, ...dateFilteredMetrics];
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -57,23 +85,20 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-        </div>
-      ) : (
-        <>
-          <MetricGrid metrics={metrics} onMetricClick={handleMetricClick} />
-          {selectedMetric && (
-            <UserTable 
-              gaugeType={selectedMetric}
-              timeRange={{
-                start: startDate,
-                end: endDate
-              }}
-            />
-          )}
-        </>
+      <MetricGrid 
+        metrics={allMetrics} 
+        onMetricClick={handleMetricClick} 
+        isLoading={loading}
+      />
+      
+      {selectedMetric && (
+        <UserTable 
+          gaugeType={selectedMetric}
+          timeRange={{
+            start: startDate,
+            end: endDate
+          }}
+        />
       )}
     </div>
   );

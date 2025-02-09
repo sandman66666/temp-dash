@@ -1,56 +1,48 @@
-import { FC } from 'react'
-import { Metric } from '../../types/metrics'
-import MetricGauge from './MetricGauge'
+import React from 'react';
+import MetricCard from './MetricCard';
+import { Metric } from '../../types/metrics';
 
 interface MetricGridProps {
-  metrics: Metric[]
-  onMetricClick: (metricId: string) => void
+  metrics: Metric[];
+  onMetricClick?: (metricId: string) => void;
+  isLoading?: boolean;
 }
 
-const MetricGrid: FC<MetricGridProps> = ({ metrics, onMetricClick }) => {
-  const orderedMetrics = metrics
-    .map(metric => metric)
-    .sort((a, b) => {
-      if (a.category === b.category) {
-        return 0;
-      }
-      if (a.category === 'user') {
-        return -1;
-      }
-      if (b.category === 'user') {
-        return 1;
-      }
-      return 0;
-    })
-    .filter(Boolean);
+const MetricGrid: React.FC<MetricGridProps> = ({ metrics, onMetricClick, isLoading = false }) => {
+  // Separate historical metrics from regular metrics
+  const historicalMetrics = metrics.filter(metric => metric.category === 'historical');
+  const regularMetrics = metrics.filter(metric => metric.category !== 'historical');
 
   return (
-    <div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {orderedMetrics.filter(metric => metric.category !== 'historical').map(metric => (
-          <div key={metric!.id} className="flex flex-col items-center">
-            <MetricGauge metric={metric!} onClick={() => onMetricClick(metric!.id)} />
-          </div>
-        ))}
-      </div>
-      
-      {/* Historical Metrics Section */}
-      <div className="mt-12 border-t pt-8">
-        <h2 className="text-xl font-semibold mb-6 text-center">Historical Totals (V1 + Current)</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {orderedMetrics.filter(metric => metric.category === 'historical').map(metric => (
-            <div key={metric!.id} className="flex flex-col items-center">
-              <MetricGauge 
-                metric={metric!}
-                size="small"
-                className="transform scale-75"
-              />
-            </div>
+    <div className="space-y-6">
+      {/* Historical metrics row */}
+      <div className="space-y-6">
+        <div className="grid grid-cols-3 gap-6">
+          {historicalMetrics.map((metric) => (
+            <MetricCard
+              key={metric.id}
+              metric={metric}
+              onClick={onMetricClick}
+              isLoading={false}  // Historical metrics don't show loading state
+            />
           ))}
         </div>
+        <div className="border-b border-indigo-200"></div>
+      </div>
+
+      {/* Regular metrics grid */}
+      <div className="grid grid-cols-3 gap-6">
+        {regularMetrics.map((metric) => (
+          <MetricCard
+            key={metric.id}
+            metric={metric}
+            onClick={onMetricClick}
+            isLoading={isLoading}
+          />
+        ))}
       </div>
     </div>
   );
-}
+};
 
-export default MetricGrid
+export default MetricGrid;

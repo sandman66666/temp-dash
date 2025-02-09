@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MetricResponse, Metric, UserStats } from '../types/metrics';
+import { MetricResponse, Metric, UserStats, UserEvent, UserEventsResponse } from '../types/metrics';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
@@ -74,9 +74,9 @@ export const fetchMetrics = async (
 };
 
 export const fetchUserStats = async (
+  gaugeType: string,
   startDate: Date,
-  endDate: Date,
-  gaugeType: string
+  endDate: Date
 ): Promise<UserStats[]> => {
   console.log(`Fetching user stats for gauge type: ${gaugeType}, start date: ${startDate}, end date: ${endDate}`);
   try {
@@ -144,25 +144,6 @@ export const fetchUserEvents = async (
     return response.data;
   } catch (error) {
     console.error('Error fetching user events:', error);
-    throw error;
-  }
-};
-
-export const setMetricTarget = async (metricId: string, target: number): Promise<void> => {
-  try {
-    const response = await fetch(`${API_URL}/metrics/${metricId}/target`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ target }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to set metric target');
-    }
-  } catch (error) {
-    console.error('Error setting metric target:', error);
     throw error;
   }
 };

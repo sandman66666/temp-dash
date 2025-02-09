@@ -1,5 +1,5 @@
 import React from 'react';
-import { format } from 'date-fns';
+import { format, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
 
 interface DateRangeSelectorProps {
   startDate: Date;
@@ -12,63 +12,113 @@ const DateRangeSelector: React.FC<DateRangeSelectorProps> = ({
   endDate,
   onDateChange,
 }) => {
+  const handleYesterday = () => {
+    const yesterday = subDays(new Date(), 1);
+    onDateChange(yesterday, yesterday);
+  };
+
+  const handleCurrentMonth = () => {
+    const now = new Date();
+    onDateChange(startOfMonth(now), now);
+  };
+
+  const handlePreviousMonth = () => {
+    const now = new Date();
+    const previousMonth = subMonths(now, 1);
+    onDateChange(startOfMonth(previousMonth), endOfMonth(previousMonth));
+  };
+
+  const handlePrevious3Months = () => {
+    const now = new Date();
+    const threeMonthsAgo = subMonths(now, 3);
+    onDateChange(threeMonthsAgo, now);
+  };
+
+  const handlePrevious6Months = () => {
+    const now = new Date();
+    const sixMonthsAgo = subMonths(now, 6);
+    onDateChange(sixMonthsAgo, now);
+  };
+
+  const handlePrevious12Months = () => {
+    const now = new Date();
+    const twelveMonthsAgo = subMonths(now, 12);
+    onDateChange(twelveMonthsAgo, now);
+  };
+
   return (
-    <div className="flex items-center gap-4">
-      <div className="flex items-center gap-2">
-        <label htmlFor="start-date" className="text-sm text-gray-600">
-          From
-        </label>
-        <input
-          id="start-date"
-          type="date"
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-          value={format(startDate, 'yyyy-MM-dd')}
-          onChange={(e) => {
-            const newStart = new Date(e.target.value);
-            onDateChange(newStart, endDate);
-          }}
-          max={format(endDate, 'yyyy-MM-dd')}
-        />
+    <div className="flex flex-col space-y-4">
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <label htmlFor="start-date" className="text-sm text-gray-600">
+            From
+          </label>
+          <input
+            id="start-date"
+            type="date"
+            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+            value={format(startDate, 'yyyy-MM-dd')}
+            onChange={(e) => {
+              const newStart = new Date(e.target.value);
+              onDateChange(newStart, endDate);
+            }}
+            max={format(endDate, 'yyyy-MM-dd')}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="end-date" className="text-sm text-gray-600">
+            To
+          </label>
+          <input
+            id="end-date"
+            type="date"
+            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
+            value={format(endDate, 'yyyy-MM-dd')}
+            onChange={(e) => {
+              const newEnd = new Date(e.target.value);
+              onDateChange(startDate, newEnd);
+            }}
+            min={format(startDate, 'yyyy-MM-dd')}
+            max={format(new Date(), 'yyyy-MM-dd')}
+          />
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        <label htmlFor="end-date" className="text-sm text-gray-600">
-          To
-        </label>
-        <input
-          id="end-date"
-          type="date"
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-          value={format(endDate, 'yyyy-MM-dd')}
-          onChange={(e) => {
-            const newEnd = new Date(e.target.value);
-            onDateChange(startDate, newEnd);
-          }}
-          min={format(startDate, 'yyyy-MM-dd')}
-          max={format(new Date(), 'yyyy-MM-dd')}
-        />
-      </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
-          onClick={() => {
-            const end = new Date();
-            const start = new Date();
-            start.setDate(end.getDate() - 7);
-            onDateChange(start, end);
-          }}
+          onClick={handleYesterday}
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
         >
-          Last 7 days
+          Yesterday
         </button>
         <button
-          onClick={() => {
-            const end = new Date();
-            const start = new Date();
-            start.setDate(end.getDate() - 30);
-            onDateChange(start, end);
-          }}
+          onClick={handleCurrentMonth}
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
         >
-          Last 30 days
+          Current Month
+        </button>
+        <button
+          onClick={handlePreviousMonth}
+          className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
+        >
+          Previous Month
+        </button>
+        <button
+          onClick={handlePrevious3Months}
+          className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
+        >
+          Last 3 Months
+        </button>
+        <button
+          onClick={handlePrevious6Months}
+          className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
+        >
+          Last 6 Months
+        </button>
+        <button
+          onClick={handlePrevious12Months}
+          className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
+        >
+          Last 12 Months
         </button>
       </div>
     </div>

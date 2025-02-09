@@ -34,3 +34,20 @@ export interface UserStats {
   sketchCount: number;
   renderCount: number;
 }
+
+export interface UserEvent {
+  event_name: string;
+  timestamp: string;
+  trace_id: string;
+  flow_id?: string;
+  [key: string]: any;
+}
+
+export interface UserEventsResponse {
+  status: string;
+  data: UserEvent[];
+  timeRange: {
+    start: string;
+    end: string;
+  };
+}

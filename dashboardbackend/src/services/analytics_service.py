@@ -35,25 +35,50 @@ class AnalyticsService:
     async def get_dashboard_metrics(self, start_date: datetime, end_date: datetime, include_v1: bool = False) -> Dict[str, Any]:
         """Get all dashboard metrics for the given time period."""
         try:
+            # Create cache key including date range
+            cache_key = f"dashboard_metrics:{start_date.isoformat()}:{end_date.isoformat()}"
+            
+            # Try to get from cache first
+            if not self.disable_cache:
+                cached_data = await self.caching_service.get(cache_key)
+                if cached_data:
+                    logger.info("Returning cached dashboard metrics")
+                    return cached_data
+
             # Get current period metrics from OpenSearch
             message_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "handleMessageInThread_start")
+            
+            # Get render counts using the correct event name
             render_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "renderStart_end")
+            logger.info(f"Render counts: {len(render_counts)}")
+            
             sketch_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "uploadSketch_end")
+
+            # Log counts for debugging
+            logger.info(f"Message counts: {len(message_counts)}")
+            logger.info(f"Render counts: {len(render_counts)}")
+            logger.info(f"Sketch counts: {len(sketch_counts)}")
 
             # Calculate user segments
             active_users = len([u for u in message_counts.values() if u > 0])
             power_users = len([u for u in message_counts.values() if u > 20])
             moderate_users = len([u for u in message_counts.values() if 5 <= u <= 20])
             producers = len([u for u in render_counts.values() if u > 0])
-            producers_attempting = len([u for u in sketch_counts.values() if u > 0])
+            productions = sum(render_counts.values())  # Total number of renders
 
-            # Get total users from Descope
-            total_users = await self.descope_service.get_total_users()
-            if total_users == 0:
-                # Use unique users from OpenSearch as fallback
-                all_users = set(message_counts.keys()) | set(render_counts.keys()) | set(sketch_counts.keys())
-                total_users = len(all_users)
-                logger.info(f"Using OpenSearch unique users as fallback for total users: {total_users}")
+            logger.info(f"Active users: {active_users}")
+            logger.info(f"Producers: {producers}")
+            logger.info(f"Productions: {productions}")
+
+            # Get total users from Descope for the period
+            logger.info(f"Getting total users at {end_date}")
+            total_users = await self.descope_service.get_total_users(end_date)  # Filter by end_date
+            logger.info(f"Total users at end date: {total_users}")
+            
+            # Calculate new users based on users created in the period
+            new_users = await self.descope_service.get_new_users_in_period(start_date, end_date)
+            logger.info(f"Total users: {total_users}")
+            logger.info(f"New users in period: {new_users}")
 
             # Calculate previous period dates
             days_diff = (end_date - start_date).days
@@ -63,46 +88,41 @@ class AnalyticsService:
             # Get previous period metrics from OpenSearch
             prev_message_counts = await self.opensearch_service.get_user_counts(prev_start_date, prev_end_date, "handleMessageInThread_start")
             prev_render_counts = await self.opensearch_service.get_user_counts(prev_start_date, prev_end_date, "renderStart_end")
-            prev_sketch_counts = await self.opensearch_service.get_user_counts(prev_start_date, prev_end_date, "uploadSketch_end")
+            logger.info(f"Previous render counts: {len(prev_render_counts)}")
 
             # Calculate previous period metrics
             active_users_prev = len([u for u in prev_message_counts.values() if u > 0])
             power_users_prev = len([u for u in prev_message_counts.values() if u > 20])
             moderate_users_prev = len([u for u in prev_message_counts.values() if 5 <= u <= 20])
             producers_prev = len([u for u in prev_render_counts.values() if u > 0])
-            producers_attempting_prev = len([u for u in prev_sketch_counts.values() if u > 0])
+            productions_prev = sum(prev_render_counts.values())
 
-            # Format metrics for frontend
-            current_date = datetime.now(timezone.utc)
-            previous_date = current_date - timedelta(days=30)  # Use 30 days ago for previous period
-            
-            # Get current unfiltered totals
+            # Get all-time metrics for historical totals
             current_date = datetime.now(timezone.utc)
             one_year_ago = current_date - timedelta(days=365)
             
-            # Get unfiltered active users (all time)
-            unfiltered_active_counts = await self.opensearch_service.get_user_counts(
+            # Get all-time active users
+            all_time_message_counts = await self.opensearch_service.get_user_counts(
                 one_year_ago,
                 current_date,
                 "handleMessageInThread_start"
             )
-            unfiltered_active_users = len([u for u in unfiltered_active_counts.values() if u > 0])
+            all_time_active_users = len([u for u in all_time_message_counts.values() if u > 0])
 
-            # Get unfiltered producers (all time)
-            unfiltered_producer_counts = await self.opensearch_service.get_user_counts(
-                one_year_ago,
-                current_date,
-                "renderStart_end"
-            )
-            unfiltered_producers = len([u for u in unfiltered_producer_counts.values() if u > 0])
+            # Get all-time productions and producers
+            all_time_render_counts = await self.opensearch_service.get_user_counts(one_year_ago, current_date, "renderStart_end")
+            logger.info(f"All-time render counts: {len(all_time_render_counts)}")
+            all_time_producers = len([u for u in all_time_render_counts.values() if u > 0])
+            all_time_productions = sum(all_time_render_counts.values())
 
-            # V1 historical numbers
+            # Baseline numbers
             v1_total_users = 55000
-            v1_active_users = 30000
-            v1_producers = 15000
+            v1_active_users = 16560
+            v1_productions = 30251
 
-            # Add historical total metrics
-            historical_total_metrics = [
+            # Format metrics
+            formatted_metrics = [
+                # Historical metrics (not affected by date range)
                 {
                     "id": "historical_total_users",
                     "name": "All Time Total Users",
@@ -121,32 +141,41 @@ class AnalyticsService:
                     "category": "historical",
                     "interval": "all_time",
                     "data": {
-                        "value": v1_active_users + unfiltered_active_users,
+                        "value": v1_active_users + all_time_active_users,
                         "trend": "neutral"
                     }
                 },
                 {
-                    "id": "historical_producers",
-                    "name": "All Time Producers",
-                    "description": "Total producers including V1",
+                    "id": "historical_productions",
+                    "name": "Productions",
+                    "description": "Total successful productions including V1",
                     "category": "historical",
                     "interval": "all_time",
                     "data": {
-                        "value": v1_producers + unfiltered_producers,
+                        "value": v1_productions + all_time_productions,
                         "trend": "neutral"
                     }
-                }
-            ]
-
-            formatted_metrics = [
+                },
+                # Current period metrics (affected by date range)
                 {
-                    "id": "total_users",
+                    "id": "total_users_count",
                     "name": "Total Users",
-                    "description": "Total number of registered users",
+                    "description": "Total number of users registered as of this period",
+                    "category": "user",
+                    "interval": "cumulative",
+                    "data": {
+                        "value": total_users,
+                        "trend": "neutral"
+                    }
+                },
+                {
+                    "id": "new_users",
+                    "name": "New Users",
+                    "description": "Users who registered during this period",
                     "category": "user",
                     "interval": "daily",
                     "data": {
-                        "value": total_users,
+                        "value": new_users,
                         "trend": "neutral"
                     }
                 },
@@ -159,29 +188,31 @@ class AnalyticsService:
                     "data": {
                         "value": active_users,
                         "previousValue": active_users_prev,
-                        "trend": "neutral",
-                        "changePercentage": 0,
-                        "historical": [
-                            {"date": previous_date.isoformat(), "value": active_users_prev},
-                            {"date": current_date.isoformat(), "value": active_users}
-                        ]
+                        "trend": "neutral"
+                    }
+                },
+                {
+                    "id": "producers",
+                    "name": "Producers",
+                    "description": "Users who have completed at least one render",
+                    "category": "user",
+                    "interval": "daily",
+                    "data": {
+                        "value": producers,
+                        "previousValue": producers_prev,
+                        "trend": "neutral"
                     }
                 },
                 {
                     "id": "power_users",
-                    "name": "Power Users", 
+                    "name": "Power Users",
                     "description": "Users with more than 20 message threads",
                     "category": "engagement",
                     "interval": "daily",
                     "data": {
                         "value": power_users,
                         "previousValue": power_users_prev,
-                        "trend": "neutral",
-                        "changePercentage": 0,
-                        "historical": [
-                            {"date": previous_date.isoformat(), "value": power_users_prev},
-                            {"date": current_date.isoformat(), "value": power_users}
-                        ]
+                        "trend": "neutral"
                     }
                 },
                 {
@@ -189,70 +220,64 @@ class AnalyticsService:
                     "name": "Moderate Users",
                     "description": "Users with 5-20 message threads",
                     "category": "engagement",
-                    "interval": "daily", 
+                    "interval": "daily",
                     "data": {
                         "value": moderate_users,
                         "previousValue": moderate_users_prev,
-                        "trend": "neutral",
-                        "changePercentage": 0,
-                        "historical": [
-                            {"date": previous_date.isoformat(), "value": moderate_users_prev},
-                            {"date": current_date.isoformat(), "value": moderate_users}
-                        ]
+                        "trend": "neutral"
                     }
                 },
                 {
-                    "id": "producers",
-                    "name": "Producers",
-                    "description": "Users who have completed at least one render",
-                    "category": "engagement",
+                    "id": "productions",
+                    "name": "Productions",
+                    "description": "Total number of completed renders",
+                    "category": "performance",
                     "interval": "daily",
                     "data": {
-                        "value": producers,
-                        "previousValue": producers_prev,
-                        "trend": "neutral",
-                        "changePercentage": 0,
-                        "historical": [
-                            {"date": previous_date.isoformat(), "value": producers_prev},
-                            {"date": current_date.isoformat(), "value": producers}
-                        ]
-                    }
-                },
-                {
-                    "id": "producers_attempting",
-                    "name": "Producers Attempting",
-                    "description": "Users who have uploaded at least one sketch",
-                    "category": "engagement",
-                    "interval": "daily",
-                    "data": {
-                        "value": producers_attempting,
-                        "previousValue": producers_attempting_prev,
-                        "trend": "neutral",
-                        "changePercentage": 0,
-                        "historical": [
-                            {"date": previous_date.isoformat(), "value": producers_attempting_prev},
-                            {"date": current_date.isoformat(), "value": producers_attempting}
-                        ]
+                        "value": productions,
+                        "previousValue": productions_prev,
+                        "trend": "neutral"
                     }
                 }
             ]
 
-            formatted_metrics.extend(historical_total_metrics)
+            # Cache the results with the date range
+            if not self.disable_cache:
+                await self.caching_service.set(cache_key, formatted_metrics, ttl=timedelta(minutes=5))
 
-            logger.info(f"Final dashboard metrics: {formatted_metrics}")
             return formatted_metrics
 
         except Exception as e:
-            logger.error(f"Error getting dashboard metrics: {str(e)}", exc_info=True)
+            logger.error(f"Error getting dashboard metrics: {e}", exc_info=True)
             raise
 
     async def get_user_statistics(self, start_date: datetime, end_date: datetime, gauge_type: str) -> List[Dict[str, Any]]:
         """Get user statistics including message and sketch counts"""
         try:
-            # Get all user activity counts
+            # Handle Descope-based gauges first
+            if gauge_type in ['total_users_count', 'new_users']:
+                # Get users from Descope based on gauge type
+                if gauge_type == 'total_users_count':
+                    # Get all users up to end_date
+                    users = await self.descope_service.get_users_list(end_date=end_date)
+                else:  # new_users
+                    # Get only users created in the period
+                    users = await self.descope_service.get_users_list(start_date=start_date, end_date=end_date)
+                
+                # Format user details
+                return [{
+                    'trace_id': user.get('userId', ''),
+                    'email': user.get('email', ''),
+                    'name': user.get('name', ''),
+                    'createdTime': user.get('createdTime', ''),
+                    'loginCount': user.get('loginCount', 0)
+                } for user in users]
+
+            # Handle OpenSearch-based gauges
             message_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "handleMessageInThread_start")
             sketch_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "uploadSketch_end")
             render_counts = await self.opensearch_service.get_user_counts(start_date, end_date, "renderStart_end")
+            logger.info(f"Render counts: {len(render_counts)}")
 
             # Get user details from Descope
             all_user_ids = set(message_counts.keys()) | set(sketch_counts.keys()) | set(render_counts.keys())
@@ -311,10 +336,12 @@ class AnalyticsService:
         
         metrics = {
             "total_users": 0,
+            "new_users": 0,
             "thread_users_count": 0,
             "render_users": 0,
             "producers_count": 0,
             "daily_total_users": 0,
+            "daily_new_users": 0,
             "daily_thread_users": 0,
             "daily_render_users": 0,
             "daily_producers": 0
@@ -332,9 +359,11 @@ class AnalyticsService:
             # Update metrics with historical data
             metrics.update({
                 "total_users": historical_metrics.get("total_users", 0),
+                "new_users": historical_metrics.get("new_users", 0),
                 "thread_users_count": historical_metrics.get("active_users", 0),  # Active users maps to thread users
                 "producers_count": historical_metrics.get("producers", 0),
                 "daily_total_users": historical_metrics.get("daily_total_users", 0),
+                "daily_new_users": historical_metrics.get("daily_new_users", 0),
                 "daily_thread_users": historical_metrics.get("daily_active_users", 0),
                 "daily_producers": historical_metrics.get("daily_producers", 0)
             })
@@ -381,8 +410,12 @@ class AnalyticsService:
         
         # Get current total users from Descope for the most up-to-date count
         if end_date >= datetime.now(timezone.utc) - timedelta(days=1):
-            total_users = await self.descope_service.get_total_users()
-            metrics["total_users"] = max(metrics["total_users"], total_users)
+            total_users = await self.descope_service.get_total_users(end_date)  # Filter by end_date
+            metrics["total_users"] = total_users  # Just use the filtered total
+            
+            # Get new users in the period
+            new_users = await self.descope_service.get_new_users_in_period(start_date, end_date)
+            metrics["new_users"] = new_users
         
         self.logger.debug(f"Final merged metrics: {metrics}")
         return metrics
@@ -415,13 +448,27 @@ class AnalyticsService:
                     "name": "Total Users",
                     "description": "Total number of registered users",
                     "category": "user",
-                    "interval": "daily",
+                    "interval": "cumulative",
                     "data": {
                         "value": metrics["total_users"],  # Raw total
                         "previousValue": 0,
                         "trend": "up",
                         "changePercentage": 0,
                         "daily_average": metrics["daily_total_users"]  # Daily average
+                    }
+                },
+                {
+                    "id": "new_users",
+                    "name": "New Users",
+                    "description": "Users who registered during this period",
+                    "category": "user",
+                    "interval": "daily",
+                    "data": {
+                        "value": metrics["new_users"],  # Raw total
+                        "previousValue": 0,
+                        "trend": "up",
+                        "changePercentage": 0,
+                        "daily_average": metrics["daily_new_users"]  # Daily average
                     }
                 },
                 {
