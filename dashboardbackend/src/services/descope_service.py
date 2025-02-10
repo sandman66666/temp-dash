@@ -17,7 +17,7 @@ class DescopeService:
 
     def __init__(self):
         """Initialize Descope service"""
-        self.bearer_token = os.getenv('DESCOPE_BEARER_TOKEN')
+        self.bearer_token = os.getenv('DESCOPE_BEARER_TOKEN', '').strip('"')
         
         if not self.bearer_token:
             logger.error("DESCOPE_BEARER_TOKEN environment variable not set")
@@ -25,7 +25,7 @@ class DescopeService:
             
         # Extract project ID from bearer token (format: P2xxx:Key)
         try:
-            self.project_id = self.bearer_token.split(':')[0]
+            self.project_id = self.bearer_token.split(':')[0].strip('"')
             logger.info(f"Extracted project ID: {self.project_id}")
         except Exception as e:
             logger.error(f"Failed to extract project ID from bearer token: {e}")
@@ -447,3 +447,37 @@ class DescopeService:
         except Exception as e:
             logger.error(f"Error searching users: {e}", exc_info=True)
             return []
+
+    async def search_users_by_date(self, start_time: int, end_time: int) -> List[Dict[str, Any]]:
+        """
+        Search for users created within a specific date range.
+        
+        Args:
+            start_time (int): Start timestamp in seconds since epoch
+            end_time (int): End timestamp in seconds since epoch
+            
+        Returns:
+            List[Dict[str, Any]]: List of user objects that match the criteria
+        """
+        query = {
+            "tenantIds": [],
+            "roleNames": [],
+            "loginIds": [],
+            "ssoAppIds": [],
+            "createdTimeRange": {
+                "startTime": start_time,
+                "endTime": end_time
+            }
+        }
+        
+        users = await self.search_users(query)
+        
+        # Filter users to ensure they are within our date range
+        filtered_users = []
+        for user in users:
+            created_time = int(user.get('createdTime', 0))
+            if start_time <= created_time <= end_time:
+                filtered_users.append(user)
+                
+        logger.info(f"Found {len(filtered_users)} users within date range out of {len(users)} total users")
+        return filtered_users

@@ -72,14 +72,18 @@ class AnalyticsService:
             logger.info(f"Productions: {productions}")
 
             # Get total users from Descope for the period
-            logger.info(f"Getting total users at {end_date}")
-            total_users = await self.descope_service.get_total_users(end_date)  # Filter by end_date
-            logger.info(f"Total users at end date: {total_users}")
-            
+            logger.info(f"Getting total users between {start_date} and {end_date}")
+            total_users = await self.descope_service.search_users_by_date(
+                int(start_date.timestamp()),
+                int(end_date.timestamp())
+            )
+            total_users_count = len(total_users)
+            logger.info(f"Total users in period: {total_users_count}")
+
             # Calculate new users based on users created in the period
-            new_users = await self.descope_service.get_new_users_in_period(start_date, end_date)
-            logger.info(f"Total users: {total_users}")
-            logger.info(f"New users in period: {new_users}")
+            # new_users = await self.descope_service.get_new_users_in_period(start_date, end_date)
+            # logger.info(f"Total users: {total_users}")
+            # logger.info(f"New users in period: {new_users}")
 
             # Calculate previous period dates
             days_diff = (end_date - start_date).days
@@ -131,7 +135,7 @@ class AnalyticsService:
                     "category": "historical",
                     "interval": "all_time",
                     "data": {
-                        "value": v1_total_users + total_users,
+                        "value": v1_total_users + total_users_count,
                         "trend": "neutral"
                     }
                 },
@@ -161,22 +165,11 @@ class AnalyticsService:
                 {
                     "id": "total_users_count",
                     "name": "Total Users",
-                    "description": "Total number of users registered as of this period",
+                    "description": "Users created during this period",
                     "category": "user",
                     "interval": "cumulative",
                     "data": {
-                        "value": total_users,
-                        "trend": "neutral"
-                    }
-                },
-                {
-                    "id": "new_users",
-                    "name": "New Users",
-                    "description": "Users who registered during this period",
-                    "category": "user",
-                    "interval": "daily",
-                    "data": {
-                        "value": new_users,
+                        "value": total_users_count,
                         "trend": "neutral"
                     }
                 },
@@ -290,7 +283,10 @@ class AnalyticsService:
                                 {"term": {"trace_id.keyword": trace_id}}
                             ]
                         }
-                    }
+                    },
+                    "sort": [
+                        {"timestamp": {"order": "desc"}}
+                    ]
                 }
                 events = await self.opensearch_service.search(query, size=1)
                 
@@ -325,6 +321,8 @@ class AnalyticsService:
                             logger.debug(f"Got user details for {trace_id} from JWT: {user_details[trace_id]}")
                         except Exception as e:
                             logger.error(f"Error decoding JWT for trace_id {trace_id}: {e}")
+                    else:
+                        logger.warning(f"No authorization header found for trace_id: {trace_id}")
                 else:
                     logger.warning(f"No events found for trace_id: {trace_id}")
 
