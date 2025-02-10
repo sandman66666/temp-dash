@@ -388,6 +388,14 @@ class DescopeService:
                 'Content-Type': 'application/json'
             }
 
+            # Add request for all fields we need
+            query["options"] = {
+                "withTestUsers": False,
+                "withLoginIds": True,
+                "withCustomAttributes": True,
+                "withExternalIds": True
+            }
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.base_url}/mgmt/user/search",
@@ -400,6 +408,33 @@ class DescopeService:
                         data = await response.json()
                         users = data.get('users', [])
                         logger.info(f"Found {len(users)} users in Descope search")
+                        
+                        # Process each user to ensure we get their email
+                        for user in users:
+                            # Try to get email from various locations
+                            email = user.get('email', '')
+                            if not email:
+                                # Try loginIds
+                                login_ids = user.get('loginIds', [])
+                                email_logins = [id for id in login_ids if '@' in id]
+                                if email_logins:
+                                    email = email_logins[0]
+                                    
+                            if not email:
+                                # Try externalIds
+                                external_ids = user.get('externalIds', [])
+                                email_externals = [id for id in external_ids if '@' in id]
+                                if email_externals:
+                                    email = email_externals[0]
+                                    
+                            # Update the user object with the found email
+                            user['email'] = email
+                            
+                            # Log the mapping for debugging
+                            v2_user_id = user.get('customAttributes', {}).get('v2UserId')
+                            if v2_user_id:
+                                logger.debug(f"User mapping - v2UserId: {v2_user_id}, email: {email}")
+                            
                         return users
                     else:
                         error_text = await response.text()

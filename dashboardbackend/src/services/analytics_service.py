@@ -3,6 +3,7 @@ AnalyticsService: Core service for fetching and aggregating analytics data
 """
 from typing import Dict, Any, List, Optional
 import logging
+import json
 from datetime import datetime, timedelta
 import os
 from src.services.metrics_service import AnalyticsMetricsService
@@ -274,56 +275,73 @@ class AnalyticsService:
             else:
                 filtered_users = set(message_counts.keys()) | set(render_counts.keys()) | set(sketch_counts.keys())
 
-            # Log the number of filtered users
+            # Log the number of filtered users and their trace_ids
             logger.info(f"Found {len(filtered_users)} users matching gauge type: {gauge_type}")
+            logger.debug(f"Filtered users from OpenSearch: {filtered_users}")
 
-            # Get user details from Descope using search instead of individual lookups
-            query = {
-                "searchFilter": {
-                    "filterFields": [{
-                        "attributeKey": "userId",
-                        "operator": "in",
-                        "values": list(filtered_users)
-                    }]
-                },
-                "page": 1,
-                "limit": len(filtered_users),
-                "options": {
-                    "withTestUsers": False
-                }
-            }
-
+            # Get user details from OpenSearch events
             user_details = {}
-            try:
-                users = await self.descope_service.search_users(query)
-                for user in users:
-                    user_id = user.get('userId')
-                    if user_id:
-                        user_details[user_id] = {
-                            'email': user.get('email', ''),
-                            'name': user.get('name', ''),
-                            'loginIds': user.get('loginIds', []),
-                            'createdTime': user.get('createdTime', '')
+            for trace_id in filtered_users:
+                # Query OpenSearch for events with this trace_id
+                query = {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"term": {"trace_id.keyword": trace_id}}
+                            ]
                         }
-            except Exception as e:
-                logger.error(f"Error fetching user details from Descope: {e}")
+                    }
+                }
+                events = await self.opensearch_service.search(query, size=1)
+                
+                if events and len(events.get('hits', {}).get('hits', [])) > 0:
+                    event = events['hits']['hits'][0]['_source']
+                    headers = event.get('event_data', {}).get('headers', {})
+                    auth_header = headers.get('authorization', '')
+                    
+                    if auth_header and auth_header.startswith('Bearer '):
+                        # Extract the JWT token
+                        token = auth_header.split(' ')[1]
+                        try:
+                            # Get the payload part of the JWT (second part)
+                            payload = token.split('.')[1]
+                            # Add padding if needed
+                            padding = 4 - (len(payload) % 4)
+                            if padding != 4:
+                                payload += '=' * padding
+                            
+                            # Decode base64
+                            import base64
+                            import json
+                            decoded = base64.b64decode(payload)
+                            jwt_data = json.loads(decoded)
+                            
+                            # Get user details from JWT
+                            user_details[trace_id] = {
+                                'email': jwt_data.get('email', ''),
+                                'name': jwt_data.get('displayName', ''),
+                                'createdTime': ''  # We don't have this in the JWT
+                            }
+                            logger.debug(f"Got user details for {trace_id} from JWT: {user_details[trace_id]}")
+                        except Exception as e:
+                            logger.error(f"Error decoding JWT for trace_id {trace_id}: {e}")
+                else:
+                    logger.warning(f"No events found for trace_id: {trace_id}")
 
             # Format user statistics
             user_stats = []
             for trace_id in filtered_users:
                 details = user_details.get(trace_id, {})
                 
-                # Get email from either email field or loginIds
-                email = details.get('email', '')
-                if not email and details.get('loginIds'):
-                    emails = [login for login in details['loginIds'] if '@' in login]
-                    if emails:
-                        email = emails[0]
+                if details:
+                    logger.debug(f"Found user details for trace_id {trace_id}: {json.dumps(details)}")
+                else:
+                    logger.warning(f"No user details found for trace_id: {trace_id}")
 
                 stats = {
                     'id': trace_id,
                     'userId': trace_id,
-                    'email': email,
+                    'email': details.get('email', ''),
                     'name': details.get('name', ''),
                     'createdTime': details.get('createdTime', ''),
                     'messageCount': message_counts.get(trace_id, 0),
@@ -331,6 +349,11 @@ class AnalyticsService:
                     'renderCount': render_counts.get(trace_id, 0)
                 }
                 user_stats.append(stats)
+
+            # Log the final list we're returning
+            logger.debug("Final user_stats list:")
+            for stat in user_stats:
+                logger.debug(f"User stat: {json.dumps(stat)}")
 
             # Sort users by message count in descending order
             user_stats.sort(key=lambda x: x['messageCount'], reverse=True)
