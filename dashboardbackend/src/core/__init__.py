@@ -3,11 +3,13 @@ Initialize application services and connections
 """
 import logging
 import os
+import asyncio
 from quart import Quart
 from src.services.caching_service import CachingService
 from src.services.analytics_service import AnalyticsService
 from src.services.descope_service import DescopeService
 from src.services.opensearch_service import OpenSearchService
+from src.services.cache_warming_service import CacheWarmingService
 from src.utils.query_builder import OpenSearchQueryBuilder
 from opensearchpy import AsyncOpenSearch
 import redis.asyncio as redis
@@ -69,20 +71,36 @@ async def init_services(app: Quart) -> None:
             descope_service
         )
 
+        # Initialize CacheWarmingService
+        cache_warming_service = CacheWarmingService(analytics_service, caching_service)
+
         # Store services in app context
         app.cache = caching_service
         app.descope_service = descope_service
         app.analytics_service = analytics_service
         app.opensearch_service = opensearch_service
+        app.cache_warming_service = cache_warming_service
 
         # Add cleanup on app teardown
         @app.before_serving
         async def startup():
             logger.info("Starting up services...")
+            # Start cache warming in the background
+            app.cache_warming_task = asyncio.create_task(cache_warming_service.start_warming_loop())
+            logger.info("Cache warming service started")
 
         @app.after_serving
         async def shutdown():
             logger.info("Shutting down services...")
+            # Cancel cache warming task
+            if hasattr(app, 'cache_warming_task'):
+                app.cache_warming_task.cancel()
+                try:
+                    await app.cache_warming_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info("Cache warming service stopped")
+            
             await caching_service.disconnect()
             await redis_client.close()
             await opensearch_service.client.close()

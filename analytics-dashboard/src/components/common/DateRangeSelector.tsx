@@ -1,5 +1,5 @@
 import React from 'react';
-import { format, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns';
+import { format, subDays, startOfMonth, endOfMonth, subMonths, subHours, endOfDay, startOfDay } from 'date-fns';
 
 interface DateRangeSelectorProps {
   startDate: Date;
@@ -12,37 +12,45 @@ const DateRangeSelector: React.FC<DateRangeSelectorProps> = ({
   endDate,
   onDateChange,
 }) => {
-  const handleYesterday = () => {
-    const yesterday = subDays(new Date(), 1);
-    onDateChange(yesterday, yesterday);
+  const handleDayBefore = () => {
+    const now = new Date();
+    const yesterdayEnd = subHours(now, 24);    // 24 hours ago
+    const yesterdayStart = subHours(now, 48);  // 48 hours ago
+    onDateChange(yesterdayStart, yesterdayEnd);
   };
 
   const handleCurrentMonth = () => {
     const now = new Date();
-    onDateChange(startOfMonth(now), now);
+    const firstDayOfMonth = startOfMonth(now);
+    firstDayOfMonth.setHours(0, 0, 0, 0);  // Start at midnight
+    onDateChange(firstDayOfMonth, now);
   };
 
   const handlePreviousMonth = () => {
     const now = new Date();
     const previousMonth = subMonths(now, 1);
-    onDateChange(startOfMonth(previousMonth), endOfMonth(previousMonth));
+    const firstDayOfMonth = startOfMonth(previousMonth);
+    const lastDayOfMonth = endOfMonth(previousMonth);
+    firstDayOfMonth.setHours(0, 0, 0, 0);      // Start at midnight
+    lastDayOfMonth.setHours(23, 59, 59, 999);  // End at last millisecond
+    onDateChange(firstDayOfMonth, lastDayOfMonth);
   };
 
-  const handlePrevious3Months = () => {
+  const handleLast3Months = () => {
     const now = new Date();
-    const threeMonthsAgo = subMonths(now, 3);
+    const threeMonthsAgo = subDays(now, 90);  // Exactly 90 days ago
     onDateChange(threeMonthsAgo, now);
   };
 
-  const handlePrevious6Months = () => {
+  const handleLast6Months = () => {
     const now = new Date();
-    const sixMonthsAgo = subMonths(now, 6);
+    const sixMonthsAgo = subDays(now, 180);  // Exactly 180 days ago
     onDateChange(sixMonthsAgo, now);
   };
 
-  const handlePrevious12Months = () => {
+  const handleLast12Months = () => {
     const now = new Date();
-    const twelveMonthsAgo = subMonths(now, 12);
+    const twelveMonthsAgo = subDays(now, 365);  // Exactly 365 days ago
     onDateChange(twelveMonthsAgo, now);
   };
 
@@ -55,14 +63,14 @@ const DateRangeSelector: React.FC<DateRangeSelectorProps> = ({
           </label>
           <input
             id="start-date"
-            type="date"
+            type="datetime-local"
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-            value={format(startDate, 'yyyy-MM-dd')}
+            value={format(startDate, "yyyy-MM-dd'T'HH:mm")}
             onChange={(e) => {
               const newStart = new Date(e.target.value);
               onDateChange(newStart, endDate);
             }}
-            max={format(endDate, 'yyyy-MM-dd')}
+            max={format(endDate, "yyyy-MM-dd'T'HH:mm")}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -71,24 +79,24 @@ const DateRangeSelector: React.FC<DateRangeSelectorProps> = ({
           </label>
           <input
             id="end-date"
-            type="date"
+            type="datetime-local"
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
-            value={format(endDate, 'yyyy-MM-dd')}
+            value={format(endDate, "yyyy-MM-dd'T'HH:mm")}
             onChange={(e) => {
               const newEnd = new Date(e.target.value);
               onDateChange(startDate, newEnd);
             }}
-            min={format(startDate, 'yyyy-MM-dd')}
-            max={format(new Date(), 'yyyy-MM-dd')}
+            min={format(startDate, "yyyy-MM-dd'T'HH:mm")}
+            max={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
           />
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <button
-          onClick={handleYesterday}
+          onClick={handleDayBefore}
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
         >
-          Yesterday
+          Day Before
         </button>
         <button
           onClick={handleCurrentMonth}
@@ -103,19 +111,19 @@ const DateRangeSelector: React.FC<DateRangeSelectorProps> = ({
           Previous Month
         </button>
         <button
-          onClick={handlePrevious3Months}
+          onClick={handleLast3Months}
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
         >
           Last 3 Months
         </button>
         <button
-          onClick={handlePrevious6Months}
+          onClick={handleLast6Months}
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
         >
           Last 6 Months
         </button>
         <button
-          onClick={handlePrevious12Months}
+          onClick={handleLast12Months}
           className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md"
         >
           Last 12 Months

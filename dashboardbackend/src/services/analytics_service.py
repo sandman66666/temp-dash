@@ -62,8 +62,8 @@ class AnalyticsService:
 
             # Calculate user segments
             active_users = len([u for u in message_counts.values() if u > 0])
-            power_users = len([u for u in message_counts.values() if u > 20])
-            moderate_users = len([u for u in message_counts.values() if 5 <= u <= 20])
+            power_users = len([u for u in message_counts.values() if u >= 20])
+            moderate_users = len([u for u in message_counts.values() if 5 <= u < 20])
             producers = len([u for u in render_counts.values() if u > 0])
             productions = sum(render_counts.values())  # Total number of renders
 
@@ -73,10 +73,19 @@ class AnalyticsService:
 
             # Get total users from Descope for the period
             logger.info(f"Getting total users between {start_date} and {end_date}")
-            total_users = await self.descope_service.search_users_by_date(
-                int(start_date.timestamp()),
-                int(end_date.timestamp())
-            )
+            
+            # Try to get users from cache first
+            cache_key = f"user_list:{start_date.isoformat()}:{end_date.isoformat()}"
+            total_users = await self.caching_service.get(cache_key)
+            
+            if total_users is None:
+                total_users = await self.descope_service.search_users_by_date(
+                    int(start_date.timestamp()),
+                    int(end_date.timestamp())
+                )
+                # Cache the results
+                await self.caching_service.set(cache_key, total_users)
+            
             total_users_count = len(total_users)
             logger.info(f"Total users in period: {total_users_count}")
 
@@ -97,8 +106,8 @@ class AnalyticsService:
 
             # Calculate previous period metrics
             active_users_prev = len([u for u in prev_message_counts.values() if u > 0])
-            power_users_prev = len([u for u in prev_message_counts.values() if u > 20])
-            moderate_users_prev = len([u for u in prev_message_counts.values() if 5 <= u <= 20])
+            power_users_prev = len([u for u in prev_message_counts.values() if u >= 20])
+            moderate_users_prev = len([u for u in prev_message_counts.values() if 5 <= u < 20])
             producers_prev = len([u for u in prev_render_counts.values() if u > 0])
             productions_prev = sum(prev_render_counts.values())
 
